@@ -1,4 +1,4 @@
-"""Small, exact source-window reads; P2's bulk collector is a separate step."""
+"""Source-window geometry, native RGB/mask reads and quality rules."""
 
 from contextlib import ExitStack
 import hashlib
@@ -125,12 +125,16 @@ class SceneReader:
     def __exit__(self, *args):
         return self.stack.__exit__(*args)
 
-    def read(self, window: Window, preview_width: int, cloud_max: float):
+    def read_block(self, window: Window):
         src = self.src
         rgb = src.read((1, 2, 3), window=window)
         # All RGB band masks must be valid, rather than an OR-combined dataset mask.
         valid = np.all(src.read_masks((1, 2, 3), window=window) > 0, axis=0)
         scl = self.scl.read(1, window=window)
+        return rgb, valid, scl
+
+    def read(self, window: Window, preview_width: int, cloud_max: float):
+        rgb, valid, scl = self.read_block(window)
         quality = check_quality(valid, scl, cloud_max)
         image = Image.fromarray(np.moveaxis(rgb, 0, 2))
         height = round(preview_width * window.height / window.width)

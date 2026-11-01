@@ -1,1 +1,1 @@
-"""Real imagery experiments. Large-scale collection is implemented separately."""
+"""Local real-imagery collection and matching experiments."""

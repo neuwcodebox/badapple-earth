@@ -1,4 +1,4 @@
-"""The only P1 source: anonymous HTTPS Sentinel-2 Collection 1."""
+"""Anonymous HTTPS Sentinel-2 Collection 1 catalogue and access contract."""
 
 from urllib.parse import urlsplit
 
@@ -20,15 +20,15 @@ def safe_asset(href: str) -> str:
         or parsed.hostname != "e84-earth-search-sentinel-data.s3.us-west-2.amazonaws.com"
         or parsed.username or parsed.password or parsed.port or parsed.query or parsed.fragment
     ):
-        raise ValueError("Unsupported asset locator; P1 permits only the public C1 HTTPS bucket")
+        raise ValueError("Unsupported asset locator; only the public C1 HTTPS bucket is supported")
     return href
 
 
 def discover(config: dict, area: dict) -> dict:
     if config["endpoint"] != ENDPOINT or config["collection"] != COLLECTION:
-        raise ValueError("P1 requires the Earth Search Sentinel-2 C1 source")
+        raise ValueError("The Earth Search Sentinel-2 C1 source is required")
     if config.get("requester_pays") is not False:
-        raise ValueError("P1 does not support Requester Pays")
+        raise ValueError("Requester Pays is not supported")
     limit = config["catalog_limit_per_aoi"]
     if not isinstance(limit, int) or not 1 <= limit <= 500:
         raise ValueError("catalog_limit_per_aoi must be between 1 and 500")

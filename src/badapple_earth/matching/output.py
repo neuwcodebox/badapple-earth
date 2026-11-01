@@ -1,0 +1,168 @@
+"""Cache required real photos and encode held frames with local FFmpeg."""
+
+from contextlib import ExitStack
+import json
+import math
+from pathlib import Path
+import shutil
+import subprocess
+
+import numpy as np
+from PIL import Image
+import pyarrow as pa
+import pyarrow.parquet as pq
+from rasterio.windows import Window
+
+from ..collection.windows import identity, slices
+from ..evidence import checksum, contact_sheet, write_json
+from ..features import canonical_image
+from ..imagery import SceneReader, check_quality
+from ..sources.sentinel import safe_asset
+
+
+def materialize(target_root: Path, index_root: Path, run_root: Path):
+    run = json.loads((run_root / "manifest.json").read_text(encoding="utf-8"))
+    targets = json.loads((target_root / "manifest.json").read_text(encoding="utf-8"))
+    index = json.loads((index_root / "manifest.json").read_text(encoding="utf-8"))
+    if run["target_set_id"] != targets["target_set_id"] or run["index_id"] != index["index_id"]:
+        raise ValueError("Run, targets and index identities differ")
+    rows = pq.read_table(run_root / "matches.parquet").to_pylist()
+    by_slot = {}
+    for row in rows:
+        by_slot.setdefault(row["slot"], []).append(row)
+    evaluation = set(np.linspace(0, targets["count"] - 1, min(20, targets["count"]), dtype=int).tolist())
+    (run_root / "photos").mkdir(exist_ok=True)
+    failures = []
+    selected, comparisons = [], {}
+    cached_job, cached_rgb = None, None
+    with ExitStack() as stack:
+        readers = {}
+        def photo(row):
+            nonlocal cached_job, cached_rgb
+            destination = run_root / "photos" / (row["tile_id"] + ".png")
+            if destination.exists():
+                return destination
+            if row["sample_image"]:
+                temporary = destination.with_suffix(".tmp")
+                shutil.copyfile(index_root / row["sample_image"], temporary)
+                temporary.replace(destination)
+                return destination
+            left, top, _, _ = row["window"]
+            size = index["config"]["block_size"]
+            job_id = identity([row["aoi_id"], row["scene_id"], left // size, top // size])
+            cached_path = index_root / "cache/blocks" / (job_id + ".npz")
+            if cached_path.exists():
+                if cached_job != job_id:
+                    with np.load(cached_path, allow_pickle=False) as data:
+                        cached_rgb = data["rgb"]
+                    cached_job = job_id
+                plan_path = index_root / "catalog" / f"{row['aoi_id']}-{row['scene_id']}.json"
+                plans = json.loads(plan_path.read_text(encoding="utf-8"))
+                plan = next(plan for plan in plans if plan["job_id"] == job_id)
+                sy, sx = slices(row["window"], plan["read_window"])
+                rgb = cached_rgb[:, sy, sx]
+            else:
+                if row["scene_id"] not in readers:
+                    scene = json.loads((index_root / "catalog" / (row["scene_id"] + ".json")).read_text(encoding="utf-8"))
+                    readers[row["scene_id"]] = stack.enter_context(SceneReader(safe_asset(scene["visual"]), safe_asset(scene["scl"])))
+                rgb, valid, scl = readers[row["scene_id"]].read_block(Window(*row["window"]))
+                quality = check_quality(valid, scl, index["config"]["max_cloud_ratio"])
+                if quality["reasons"]:
+                    raise ValueError("Selected source window is no longer valid")
+            image = canonical_image(rgb, tuple(index["canonical_size"]))
+            temporary = destination.with_suffix(".tmp")
+            image.save(temporary, format="PNG")
+            temporary.replace(destination)
+            return destination
+
+        for slot, candidates in sorted(by_slot.items()):
+            candidates.sort(key=lambda row: row["rank"])
+            chosen = None
+            for row in candidates:
+                try:
+                    path = photo(row)
+                    chosen = {**row, "photo": path.relative_to(run_root).as_posix(),
+                              "photo_sha256": checksum(path),
+                              "fallback_reason": None if row["rank"] == 1 else "higher_rank_materialization_failed"}
+                    break
+                except (OSError, ValueError) as error:
+                    failures.append({"slot": slot, "tile_id": row["tile_id"], "rank": row["rank"],
+                                     "error_type": type(error).__name__})
+            if chosen is None:
+                raise ValueError(f"No candidate could be materialized for target slot {slot}")
+            selected.append(chosen)
+            if slot in evaluation:
+                paths = []
+                for row in candidates[:5]:
+                    try:
+                        paths.append((photo(row), f"rank {row['rank']} MSE {row['raw_mse']:.4f}"))
+                    except (OSError, ValueError) as error:
+                        failures.append({"slot": slot, "tile_id": row["tile_id"], "rank": row["rank"],
+                                         "stage": "comparison", "error_type": type(error).__name__})
+                comparisons[slot] = paths
+    pq.write_table(pa.Table.from_pylist(selected), run_root / "selected.parquet", compression="zstd")
+    target_rows = pq.read_table(target_root / "targets.parquet").to_pylist()
+    entries = []
+    for slot, photos in comparisons.items():
+        entries.append((target_root / target_rows[slot]["frame"], f"target {target_rows[slot]['target_time']:.3f}s"))
+        entries.extend(photos)
+    contact_sheet(entries, run_root / "top5.jpg", columns=6)
+    run["materialized"] = len(selected)
+    run["materialization_failures"] = failures
+    run["evaluation_slots"] = sorted(evaluation)
+    run["selected_unique_tiles"] = len({row["tile_id"] for row in selected})
+    years = sorted({row["acquired_at"][:4] for row in selected})
+    run["credits"] = [f"Contains modified Copernicus Sentinel data {year}" for year in years]
+    run["source_reference"] = "https://registry.opendata.aws/sentinel-2-l2a-cogs/"
+    write_json(run_root / "manifest.json", run)
+    return run
+
+
+def encode(frames: Path, destination: Path, sample_fps: float, output_fps: float, duration: float):
+    subprocess.run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-framerate", str(sample_fps), "-i", str(frames / "%04d.png"),
+        "-vf", f"fps={output_fps},pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0",
+        "-t", str(duration), "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        str(destination),
+    ], capture_output=True, check=True)
+
+
+def render(target_root: Path, run_root: Path):
+    target_manifest = json.loads((target_root / "manifest.json").read_text(encoding="utf-8"))
+    run = json.loads((run_root / "manifest.json").read_text(encoding="utf-8"))
+    if run["target_set_id"] != target_manifest["target_set_id"]:
+        raise ValueError("Run and target set identities differ")
+    config = target_manifest["config"]
+    if config["audio_mode"] != "silent_pending_rights_review":
+        raise ValueError("This first renderer supports the explicit silent mode only")
+    selected = pq.read_table(run_root / "selected.parquet").to_pylist()
+    selected.sort(key=lambda row: row["slot"])
+    if [row["slot"] for row in selected] != list(range(target_manifest["count"])):
+        raise ValueError("Selected photo slots are incomplete")
+    targets = pq.read_table(target_root / "targets.parquet").to_pylist()
+    for name in ["color", "gray", "comparison"]:
+        (run_root / "frames" / name).mkdir(parents=True, exist_ok=True)
+    for row in selected:
+        slot = row["slot"]
+        with Image.open(run_root / row["photo"]) as source:
+            source = source.convert("RGB")
+            source.save(run_root / "frames/color" / f"{slot:04d}.png")
+            source.convert("L").save(run_root / "frames/gray" / f"{slot:04d}.png")
+            with Image.open(target_root / targets[slot]["frame"]) as target:
+                pair = Image.new("RGB", (source.width * 2, source.height))
+                pair.paste(target, (0, 0))
+                pair.paste(source, (source.width, 0))
+                pair.save(run_root / "frames/comparison" / f"{slot:04d}.png")
+    for name in ["color", "gray", "comparison"]:
+        encode(run_root / "frames" / name, run_root / f"{name}.mp4", config["sample_fps"],
+               config["output_fps"], config["duration_seconds"])
+    run["outputs"] = ["color.mp4", "gray.mp4", "comparison.mp4", "top5.jpg", "selected.parquet"]
+    run["audio_mode"] = "silent_pending_rights_review"
+    run["output_fps"] = config["output_fps"]
+    run["duration_seconds"] = config["duration_seconds"]
+    run["frame_mapping"] = "floor(output_time * sample_fps); hold photos, no interpolation"
+    run["output_sha256"] = {name: checksum(run_root / name) for name in run["outputs"]}
+    run["quality_conclusion"] = "small_dataset_technical_baseline"
+    write_json(run_root / "manifest.json", run)
+    return run
