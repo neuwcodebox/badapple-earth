@@ -9,6 +9,7 @@ from PIL import Image
 from rasterio.windows import Window
 
 from ..collection.windows import identity, slices
+from ..collection.bundle import members
 from ..features import canonical_image
 from ..imagery import SceneReader, check_quality
 from ..sources.sentinel import safe_asset
@@ -22,6 +23,8 @@ class PhotoCache:
         self.cached_job, self.cached_rgb = None, None
         self.counts = {"png": 0, "block": 0, "remote": 0}
         self.local = root / "cache/base-photos"
+        self.member_sources = {m["index_id"]: (path, m) for path, m, _ in members(root, manifest)} if manifest.get("schema") == "index-bundle-v1" else {}
+        self.member_caches = {}
 
     def __enter__(self):
         return self
@@ -35,6 +38,12 @@ class PhotoCache:
         return self.scenes[scene_id]
 
     def base(self, tile):
+        if self.member_sources:
+            source_id = tile["index_member"]
+            if source_id not in self.member_caches:
+                path, manifest = self.member_sources[source_id]
+                self.member_caches[source_id] = self.stack.enter_context(PhotoCache(path, manifest, self.extra))
+            return self.member_caches[source_id].base(tile)
         paths = [self.local / (tile["tile_id"] + ".png")]
         if tile["sample_image"]:
             paths.append(self.root / tile["sample_image"])

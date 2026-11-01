@@ -156,7 +156,7 @@ class Index:
                 return row["tile_id"]
         return None
 
-    def commit(self, plan, cursor, done, records, coarse, fine, rejected, images):
+    def commit(self, plan, cursor, done, records, coarse, fine, rejected, images, rotations=None):
         shard_id = identity([plan["job_id"], cursor, [r["tile_id"] for r in records], rejected])
         stage = self.root / "staging" / (shard_id + "-" + uuid.uuid4().hex)
         stage.mkdir()
@@ -176,9 +176,12 @@ class Index:
             np.save(stage / (name + ".npy"), data, allow_pickle=False)
         write_json(stage / "checkpoint.json", {"plan": plan, "cursor": cursor,
                    "state": "DONE" if done else "PENDING", "rejected": rejected})
+        if rotations and records:
+            from ..matching.views import write_view_shard
+            write_view_shard(stage / "views", records, rotations["images"], rotations["scene"], self.manifest, shard_id)
+        files = [p.relative_to(stage).as_posix() for p in stage.rglob("*") if p.is_file()]
         descriptor = {"shard_id": shard_id, "config_id": self.config_id, "rows": len(records),
-                      "files": {name: checksum(stage / name) for name in
-                                ["tiles.parquet", "gray_coarse.npy", "gray_fine.npy", "checkpoint.json"]}}
+                      "files": {name: checksum(stage / name) for name in files}}
         write_json(stage / "shard.json", descriptor)
         # Publication and SQLite are separate transactions. recover() bridges a crash.
         stage.rename(self.root / "shards" / shard_id)

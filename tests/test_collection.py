@@ -26,6 +26,9 @@ class Scene:
     transform = from_origin(0, 1, 1 / 512, 1 / 384)
     res = (1 / 512, 1 / 384)
 
+    def read_masks(self, *args, out_shape):
+        return np.full(out_shape, 255, np.uint8)
+
 
 def scene():
     return {"item_id": "S2A_T00AAA_test_L2A", "source_id": "test", "collection_id": "test",

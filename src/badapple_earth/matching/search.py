@@ -8,6 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ..collection.windows import identity
+from ..collection.bundle import members
 from ..evidence import write_json
 from .views import ANGLES, VIEW_VERSION, prepare_views, rotation_recipe
 
@@ -40,26 +41,34 @@ def match(target_root: Path, index_root: Path, output: Path, top_k=20,
     matrix = target_data.reshape(len(target_rows), -1).astype(np.int32)
     target_norm = np.sum(matrix * matrix, axis=1)
     retained = [[] for _ in target_rows]
-    candidate_count = sum(s["rows"] for s in index_manifest["shards"])
+    sources = members(index_root, index_manifest)
+    candidate_count = sum(sum(s["rows"] for s in m["shards"]) - len(excluded) for _, m, excluded in sources)
+    shard_ids = [m["index_id"] + "/" + s["shard_id"] for _, m, _ in sources for s in m["shards"]]
     descriptors = []
-    if 0 in rotations:
-        descriptors.extend((index_root / "shards" / s["shard_id"], s["rows"], False)
-                           for s in index_manifest["shards"] if s["rows"])
-    if any(angle for angle in rotations):
-        view_root, view_manifest = prepare_views(index_root, index_manifest, photo_cache)
-        descriptors.extend((view_root / s["source_shard"], s["rows"], True) for s in view_manifest["shards"])
+    for source_root, source_manifest, excluded in sources:
+        if 0 in rotations:
+            descriptors.extend((source_root / "shards" / s["shard_id"], s["rows"], False, source_manifest["index_id"], excluded)
+                               for s in source_manifest["shards"] if s["rows"])
+        if any(angle for angle in rotations):
+            view_root, view_manifest = prepare_views(source_root, source_manifest, photo_cache)
+            descriptors.extend(((source_root / "shards" / s["source_shard"] / "views") if s.get("inline")
+                                else view_root / s["source_shard"], s["rows"], True, source_manifest["index_id"], excluded)
+                               for s in view_manifest["shards"])
     view_count = 0
-    for directory, row_count, is_view in descriptors:
+    for directory, row_count, is_view, source_id, excluded in descriptors:
         rows = pq.read_table(directory / ("views.parquet" if is_view else "tiles.parquet")).to_pylist()
         data = np.load(directory / "gray_coarse.npy", mmap_mode="r", allow_pickle=False)
         if data.shape != (len(rows), *index_manifest["coarse_shape"]) or len(rows) != row_count or data.dtype != np.uint8:
             raise ValueError("Index shard row mapping or feature shape is invalid")
         if any(row["view_feature_row" if is_view else "feature_row"] != position for position, row in enumerate(rows)):
             raise ValueError("Index feature-row mapping is invalid")
-        if is_view:
-            positions = [position for position, row in enumerate(rows) if row["rotation_degrees"] in rotations]
+        if is_view or excluded:
+            positions = [position for position, row in enumerate(rows)
+                         if (not is_view or row["rotation_degrees"] in rotations) and row["tile_id"] not in excluded]
             rows = [rows[position] for position in positions]
             data = data[positions]
+        for row in rows:
+            row["index_member"] = source_id
         for begin in range(0, len(rows), 8192):
             batch_rows = rows[begin:begin + 8192]
             batch = np.asarray(data[begin:begin + 8192]).reshape(len(batch_rows), -1).astype(np.int32)
@@ -75,7 +84,7 @@ def match(target_root: Path, index_root: Path, output: Path, top_k=20,
         raise ValueError("Index contains no searchable candidates")
     output.mkdir(parents=True, exist_ok=False)
     run_id = identity([target_manifest["target_set_id"], index_manifest["index_id"],
-                       [s["shard_id"] for s in index_manifest["shards"]], top_k, rotations, VIEW_VERSION])
+                       shard_ids, top_k, rotations, VIEW_VERSION])
     matches = []
     for target, candidates in zip(target_rows, retained):
         for rank, (distance, tile) in enumerate(candidates, 1):
@@ -91,7 +100,7 @@ def match(target_root: Path, index_root: Path, output: Path, top_k=20,
     best = [entry[0][0] / (matrix.shape[1] * 255**2) for entry in retained]
     manifest = {"run_id": run_id,
                 "target_set_id": target_manifest["target_set_id"], "index_id": index_manifest["index_id"],
-                "shard_ids": [s["shard_id"] for s in index_manifest["shards"]],
+                "shard_ids": shard_ids, "index_members": [m["index_id"] for _, m, _ in sources],
                 "candidate_count": candidate_count, "view_count": view_count, "rotations": list(rotations),
                 "view_version": VIEW_VERSION, "top_k": top_k, "target_count": len(target_rows),
                 "metric": "gray-mse-[0,1]-v1", "accumulation": "exact int32 SSE, scaled to MSE",

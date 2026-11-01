@@ -1,6 +1,7 @@
 """Quarter-turn views of the same real photo, with an explicit center crop."""
 
 import json
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,11 @@ from ..imagery import window_location
 
 VIEW_VERSION = "canonical-quarter-turn-center-crop-v1"
 ANGLES = (0, 90, 180, 270)
+
+
+@lru_cache(maxsize=128)
+def geodesic(crs):
+    return CRS.from_user_input(crs).get_geod()
 
 
 def rotation_recipe(size, degrees):
@@ -66,9 +72,8 @@ def view_metadata(tile, scene, size, degrees):
                        sw * (x1 - x0) / width, sh * (y1 - y0) / height)
     transform = Affine(*scene["affine"])
     location = window_location(transform, scene["crs"], effective)
-    crs = CRS.from_user_input(scene["crs"])
     polygon = location["footprint"]["coordinates"][0]
-    geod = crs.get_geod()
+    geod = geodesic(scene["crs"])
     ground_width = abs(geod.inv(*polygon[0], *polygon[1])[2])
     ground_height = abs(geod.inv(*polygon[0], *polygon[3])[2])
     if degrees in (90, 270):
@@ -81,6 +86,25 @@ def view_metadata(tile, scene, size, degrees):
             "longitude": location["longitude"], "latitude": location["latitude"],
             "ground_width_m": ground_width, "ground_height_m": ground_height,
             "base_feature_row": tile["feature_row"]}
+
+
+def write_view_shard(destination, tiles, images, scene, manifest, source_shard):
+    """Use already-read canonical RGB while a collection batch is in memory."""
+    destination.mkdir(parents=True, exist_ok=True)
+    rows, coarse, fine = [], [], []
+    for tile, image in zip(tiles, images):
+        for degrees in (90, 180, 270):
+            row = view_metadata(tile, scene, manifest["canonical_size"], degrees)
+            rotated = rotate_image(image, degrees, manifest["canonical_size"], row["rotation_crop"])
+            c, f, _ = extract(rotated, manifest["config"]["aspect_ratio"])
+            row["view_feature_row"] = len(rows)
+            rows.append(row)
+            coarse.append(c)
+            fine.append(f)
+    pq.write_table(pa.Table.from_pylist(rows), destination / "views.parquet", compression="zstd")
+    np.save(destination / "gray_coarse.npy", np.stack(coarse), allow_pickle=False)
+    np.save(destination / "gray_fine.npy", np.stack(fine), allow_pickle=False)
+    write_json(destination / "complete.json", {"source_shard": source_shard, "rows": len(rows), "inline": True})
 
 
 def prepare_views(index_root: Path, manifest: dict, photo_cache: Path | None = None):
@@ -101,6 +125,11 @@ def prepare_views(index_root: Path, manifest: dict, photo_cache: Path | None = N
         with PhotoCache(index_root, manifest, photo_cache) as photos:
             for number, source in enumerate(source_shards):
                 if source in completed:
+                    continue
+                inline = index_root / "shards" / source / "views/complete.json"
+                if inline.exists():
+                    view_manifest["shards"].append(json.loads(inline.read_text(encoding="utf-8")))
+                    write_json(path, view_manifest)
                     continue
                 destination = root / source
                 if not (destination / "complete.json").exists():
@@ -128,6 +157,7 @@ def prepare_views(index_root: Path, manifest: dict, photo_cache: Path | None = N
                 if (number + 1) % 20 == 0 or number + 1 == len(source_shards):
                     print(f"Rotation features: {number + 1}/{len(source_shards)} shards", flush=True)
         view_manifest["view_count"] = sum(s["rows"] for s in view_manifest["shards"])
-        view_manifest["base_reads"] = photos.counts
+        prior = view_manifest.get("base_reads", {})
+        view_manifest["base_reads"] = {key: prior.get(key, 0) + value for key, value in photos.counts.items()}
         write_json(path, view_manifest)
     return root, view_manifest

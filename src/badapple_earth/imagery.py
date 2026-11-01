@@ -1,6 +1,7 @@
 """Source-window geometry, native RGB/mask reads and quality rules."""
 
 from contextlib import ExitStack
+from functools import lru_cache
 import hashlib
 import json
 
@@ -31,8 +32,13 @@ def stable_id(scene: dict, window: Window) -> str:
     return hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
 
 
+@lru_cache(maxsize=128)
+def geographic_transformer(crs):
+    return Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+
+
 def window_location(transform, crs, window: Window) -> dict:
-    converter = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+    converter = geographic_transformer(str(crs))
     cx, cy = transform @ (window.col_off + window.width / 2, window.row_off + window.height / 2)
     lon, lat = converter.transform(cx, cy)
     corners = [(window.col_off, window.row_off),
@@ -89,6 +95,36 @@ def check_quality(valid: np.ndarray, scl: np.ndarray, cloud_max: float) -> dict:
         reasons.append("cloud_contamination")
     return {"valid_ratio": valid_ratio, "local_cloud_ratio": cloud_ratio,
             "invalid_scl_ratio": invalid_scl_ratio, "reasons": reasons}
+
+
+def quality_tables(valid, scl):
+    """Summed-area masks make overlapping-window quality queries constant time."""
+    masks = [~valid, np.isin(scl, [0, 1]), np.isin(scl, [3, 8, 9, 10])]
+    result = []
+    for mask in masks:
+        table = np.zeros((mask.shape[0] + 1, mask.shape[1] + 1), dtype=np.uint32)
+        table[1:, 1:] = mask.cumsum(axis=0, dtype=np.uint32).cumsum(axis=1, dtype=np.uint32)
+        result.append(table)
+    return result
+
+
+def window_quality(tables, sy, sx, cloud_max):
+    area = (sy.stop - sy.start) * (sx.stop - sx.start)
+    ratios = []
+    for table in tables:
+        count = (int(table[sy.stop, sx.stop]) - int(table[sy.start, sx.stop])
+                 - int(table[sy.stop, sx.start]) + int(table[sy.start, sx.start]))
+        ratios.append(count / area)
+    invalid, scl_bad, cloud = ratios
+    reasons = []
+    if invalid:
+        reasons.append("partial_valid")
+    if scl_bad:
+        reasons.append("invalid_scl")
+    if cloud > cloud_max:
+        reasons.append("cloud_contamination")
+    return {"valid_ratio": 1 - invalid, "local_cloud_ratio": cloud,
+            "invalid_scl_ratio": scl_bad, "reasons": reasons}
 
 
 class SceneReader:

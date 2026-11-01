@@ -81,6 +81,25 @@ uv run badapple-earth render --targets data/targets/38s-10s-6fps --run data/runs
 
 결과는 `color.mp4`, `gray.mp4`, `comparison.mp4`, 고정 목표 20개의 `top5.jpg`, 전체 Top-K의 `matches.parquet`, 실제 선택의 `selected.parquet`와 출처 manifest다. 현재 렌더는 24fps 사진 hold와 명시적 무음 모드다. 원본 음원 동기화는 사용권 확인 후 구현할 후속 기능이다. 소규모 결과는 기술적 기준 결과이며 충분히 큰 데이터셋에서의 표현력을 대신 평가하지 않는다.
 
+### 6. 기존 후보를 재사용하며 규모 확대
+
+P4는 기존 1만 후보에 새 60개 AOI의 9만 후보를 더한다. 새 설정은 `config/collect-p4.json`이며 여섯 지형군, 폭별 초기 가중치 55:30:15, 수집 중 직각 회전 특징 생성을 사용한다. RGB를 읽은 시점에 세 방향 특징을 같은 배치에 저장해 후속 검색의 원본 읽기를 줄인다.
+
+```bash
+uv run badapple-earth collect --config config/collect-p4.json --output data/index/p4-additional-90k --limit 90000 --redistribute
+uv run badapple-earth combine --index data/index/p2-10k --index data/index/p4-additional-90k --output data/index/p4-100k
+uv run badapple-earth match --targets data/targets/38s-10s-6fps --index data/index/p4-100k --output data/runs/p4-100k --top-k 20
+uv run badapple-earth materialize --targets data/targets/38s-10s-6fps --index data/index/p4-100k --run data/runs/p4-100k
+uv run badapple-earth render --targets data/targets/38s-10s-6fps --run data/runs/p4-100k
+uv run badapple-earth compare --baseline data/runs/p3-10k-rotations --run data/runs/p4-100k
+```
+
+`combine`은 원래 파일을 복사하지 않고 상대경로와 고정 shard 목록으로 참조한다. 같은 tile ID는 한 번만 검색한다. 원래 인덱스 폴더는 보관해야 하며, 이후 멤버의 shard 목록이 달라지면 `combine`으로 스냅샷을 다시 만든다. 원본 인덱스를 bundle 출력 경로로 덮어쓸 수 없다. 실제 장소 수는 중복을 뺀 합계이며, 일부만 수집됐으면 그 실제 수로 동작한다.
+
+`compare`는 타깃·metric·각도 집합·회전 recipe가 같은 run만 비교하고 `baseline-comparison.json`에 목표별 MSE 차이와 개선/동률/악화 수를 저장한다. 지역·스케일 표본도 넓어지므로 후보 수만의 효과로 과장하지 않는다. P4 운영 한도는 관측 RSS 3GiB, 인덱스 디스크 24GiB, 여유 공간 하한 8GiB다.
+
+`--redistribute`는 일부 AOI의 가용 후보가 초기 할당보다 적을 때, 할당을 채운 AOI의 남은 창으로 부족분을 메운다. 같은 지형군을 우선하며 고갈된 AOI는 재배분 대상에서 제외한다. 모든 곳의 여유가 없거나 추가 수집이 진전되지 않으면 실제 부분 결과로 종료한다. 지역별 수량은 manifest에 실제 분포로 남긴다.
+
 ## 사용 방법
 
 기본 제작 흐름은 다음과 같다.

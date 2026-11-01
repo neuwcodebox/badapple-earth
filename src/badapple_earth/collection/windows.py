@@ -25,6 +25,28 @@ def area_quotas(total: int, areas: list[dict]) -> dict[str, int]:
     return result
 
 
+def refill_limits(total: int, areas: list[dict], counts: dict, prior_limits: dict):
+    """Use demonstrated spare AOI capacity, preferring the same terrain group."""
+    limits = dict(counts)
+    remaining = max(0, total - sum(counts.values()))
+    eligible = {area["id"] for area in areas if counts[area["id"]] >= prior_limits[area["id"]]
+                and prior_limits[area["id"]] > 0}
+    groups = sorted({area["terrain_group"] for area in areas})
+    targets = allocate(total, groups)
+    for group in groups:
+        group_areas = [area["id"] for area in areas if area["terrain_group"] == group]
+        receivers = [name for name in group_areas if name in eligible]
+        budget = min(remaining, max(0, targets[group] - sum(counts[name] for name in group_areas)))
+        if receivers and budget:
+            for name, extra in allocate(budget, receivers).items():
+                limits[name] += extra
+            remaining -= budget
+    if remaining and eligible:
+        for name, extra in allocate(remaining, sorted(eligible)).items():
+            limits[name] += extra
+    return limits
+
+
 def blocks(src, scene: dict, area: dict, config: dict, potential=None) -> list[dict]:
     grouped = defaultdict(list)
     to_geo = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)

@@ -20,11 +20,11 @@ from rasterio.windows import Window
 
 from ..evidence import write_json
 from ..features import EXTRACTION_VERSION, canonical_image, extract
-from ..imagery import SceneReader, check_quality, window_location
+from ..imagery import SceneReader, quality_tables, window_quality, window_location
 from ..sample import validate_config as validate_sample_config
 from ..sources.sentinel import discover, safe_asset
 from .storage import Index, writer_lock
-from .windows import allocate, area_quotas, blocks, identity, slices
+from .windows import allocate, area_quotas, blocks, identity, refill_limits, slices
 
 
 class ResourceLimit(ValueError):
@@ -42,6 +42,9 @@ def validate_config(config: dict):
             raise ValueError(f"Invalid {name}")
     if not 0.25 <= config["stride_fraction"] <= 1:
         raise ValueError("stride_fraction must be between 0.25 and 1")
+    weights = config.get("scale_weights")
+    if weights is not None and (len(weights) != len(config["widths"]) or any(weight <= 0 for weight in weights)):
+        raise ValueError("scale_weights must have one positive weight for each width")
 
 
 def catalog(root: Path, config: dict):
@@ -51,7 +54,12 @@ def catalog(root: Path, config: dict):
     catalogs, selected = [], {}
     for area in config["areas"]:
         print(f"Discovering {area['id']}", flush=True)
-        result = discover(config, area)
+        area_path = root / "catalog" / (area["id"] + "-discovery.json")
+        if area_path.exists():
+            result = json.loads(area_path.read_text(encoding="utf-8"))
+        else:
+            result = discover(config, area)
+            write_json(area_path, result)
         catalogs.append(result)
         chosen, spatial = [], set()
         for scene in result["candidates"]:
@@ -83,7 +91,11 @@ def resources(index: Index) -> int:
     free = shutil.disk_usage(index.root).free
     if free < config["min_free_disk_mb"] * 1024**2:
         raise ResourceLimit("Free disk floor reached; committed work is preserved")
-    used = sum(path.stat().st_size for path in index.root.rglob("*") if path.is_file())
+    now = time.monotonic()
+    if now - getattr(index, "last_disk_scan", -float("inf")) >= 15:
+        index.manifest["observed_disk_bytes"] = sum(path.stat().st_size for path in index.root.rglob("*") if path.is_file())
+        index.last_disk_scan = now
+    used = index.manifest["observed_disk_bytes"]
     if used > config["max_disk_mb"] * 1024**2:
         raise ResourceLimit("Index disk budget reached; committed work is preserved")
     index.manifest["observed_disk_bytes"] = used
@@ -128,11 +140,14 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
         index.db.execute("UPDATE jobs SET state='RUNNING',attempts=attempts+1 WHERE job_id=?", (plan["job_id"],))
     rss = resources(index)
     read_pixels = plan["read_window"][2] * plan["read_window"][3]
-    if rss + read_pixels * 12 > config["max_memory_mb"] * 1024**2:
+    if rss + read_pixels * 28 > config["max_memory_mb"] * 1024**2:
         raise ResourceLimit("Read block would exceed the memory budget; committed work is preserved")
     rgb, valid, scl = cached_block(index, reader, plan)
+    tables = quality_tables(valid, scl)
     resources(index)
     records, coarse_values, fine_values, rejected, images = [], [], [], [], {}
+    rotation_images = [] if config.get("collect_rotations", False) else None
+    crs = CRS.from_user_input(reader.src.crs)
     row_map = {}
     heap = [-int(row[0], 16) for row in index.db.execute(
         "SELECT sample_key FROM tiles ORDER BY sample_key LIMIT ?", (config["report_samples"],))]
@@ -149,7 +164,7 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
             deferred = position if deferred is None else min(deferred, position)
             continue
         sy, sx = slices(window, plan["read_window"])
-        quality = check_quality(valid[sy, sx], scl[sy, sx], config["max_cloud_ratio"])
+        quality = window_quality(tables, sy, sx, config["max_cloud_ratio"])
         if quality["reasons"]:
             rejected.append({"tile_id": tile_id, "scene_id": scene["item_id"], "aoi_id": area["id"],
                              "window": window, "reason": "+".join(quality["reasons"]), **quality})
@@ -166,7 +181,6 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
                 near = previous["tile_id"]
                 break
         location = window_location(reader.src.transform, reader.src.crs, Window(*window))
-        crs = CRS.from_user_input(reader.src.crs)
         unit = crs.axis_info[0].unit_conversion_factor if crs.is_projected else None
         if unit is not None:
             ground_width = math.hypot(reader.src.transform.a, reader.src.transform.d) * width * unit
@@ -198,6 +212,8 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
             if len(heap) > config["report_samples"]:
                 heapq.heappop(heap)
         records.append(row)
+        if rotation_images is not None:
+            rotation_images.append(image)
         row_map.setdefault(key, []).append((row, coarse))
         coarse_values.append(coarse)
         fine_values.append(fine)
@@ -206,7 +222,8 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
     if deferred is not None:
         cursor = deferred
     if records or rejected or cursor > job["cursor"]:
-        index.commit(plan, cursor, deferred is None, records, coarse_values, fine_values, rejected, images)
+        rotations = {"images": rotation_images, "scene": reader.metadata} if rotation_images is not None else None
+        index.commit(plan, cursor, deferred is None, records, coarse_values, fine_values, rejected, images, rotations)
         with index.db:
             index.db.execute("UPDATE jobs SET attempts=0 WHERE job_id=?", (plan["job_id"],))
     else:
@@ -219,7 +236,7 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
         print(f"  {area['id']}: {sum(counts.values())} candidates, total {index.count()}", flush=True)
 
 
-def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int | None = None):
+def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int | None = None, redistribute=False):
     validate_config(config)
     if type(limit) is not int or limit < 1:
         raise ValueError("Candidate limit must be a positive integer")
@@ -236,70 +253,94 @@ def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int
                 outcome = "complete"
                 return index.report()
             sources = catalog(root, config)
-            for area in config["areas"]:
-                quota = limits[area["id"]]
-                if index.count(area=area["id"]) >= quota:
-                    continue
-                scale_limits = allocate(quota, config["widths"])
-                scenes = sources["selected"][area["id"]]
-                # First balance scene/scale coverage; then spend cached capacity
-                # before requesting additional pixels to meet the AOI total.
-                for pass_number in range(4):
-                    relaxed = pass_number > 0
-                    active_scale_limits = scale_limits if pass_number < 2 else {width: quota for width in config["widths"]}
-                    for scene_number, scene in enumerate(scenes):
-                        if index.count(area=area["id"]) >= quota:
-                            break
-                        # Fixed caps keep pause/resume from progressively favoring scene 1.
-                        if not relaxed and scene_number + 1 < len(scenes):
-                            scene_limit = allocate(quota, [item["item_id"] for item in scenes])[scene["item_id"]]
-                        else:
-                            scene_limit = quota - index.count(area=area["id"]) + index.count(area=area["id"], scene=scene["item_id"])
-                        if index.count(area=area["id"], scene=scene["item_id"]) >= scene_limit:
-                            continue
-                        plan_path = root / "catalog" / f"{area['id']}-{scene['item_id']}.json"
-                        print(f"Collecting {area['id']}: {scene['item_id']}", flush=True)
-                        try:
-                            with SceneReader(safe_asset(scene["visual"]), safe_asset(scene["scl"])) as reader:
-                                metadata_path = root / "catalog" / (scene["item_id"] + ".json")
-                                if not metadata_path.exists():
-                                    write_json(metadata_path, {**scene, **reader.metadata})
-                                if plan_path.exists():
-                                    plans = json.loads(plan_path.read_text(encoding="utf-8"))
-                                else:
-                                    # Rank useful terrain before requesting large RGB blocks.
-                                    # This coarse SCL view is a planning hint, not the final quality test.
-                                    scl_hint = reader.scl.read(1, out_shape=(256, 256), resampling=Resampling.nearest)
-                                    potential = ~np.isin(scl_hint, [0, 1, 3, 8, 9, 10])
-                                    plans = blocks(reader.src, scene, area, config, potential)[:config["max_blocks_per_scene"]]
-                                    write_json(plan_path, plans)
-                                index.register(plans)
-                                for plan in plans:
-                                    if index.count(area=area["id"]) >= quota or index.count(area=area["id"], scene=scene["item_id"]) >= scene_limit:
-                                        break
-                                    if pass_number in (1, 2) and not (root / "cache/blocks" / (plan["job_id"] + ".npz")).exists():
-                                        continue
-                                    while True:
-                                        try:
-                                            process_block(index, reader, scene, area, plan, active_scale_limits, scene_limit)
+            for quota_round in range(5 if redistribute else 1):
+                before_round = index.count()
+                for area in config["areas"]:
+                    quota = limits[area["id"]]
+                    if index.count(area=area["id"]) >= quota:
+                        continue
+                    weights = config.get("scale_weights")
+                    if weights:
+                        scaled = [quota * weight / sum(weights) for weight in weights]
+                        parts = [int(value) for value in scaled]
+                        for i in sorted(range(len(parts)), key=lambda i: (scaled[i] - parts[i], -i), reverse=True)[:quota-sum(parts)]:
+                            parts[i] += 1
+                        scale_limits = dict(zip(config["widths"], parts))
+                    else:
+                        scale_limits = allocate(quota, config["widths"])
+                    scenes = sources["selected"][area["id"]]
+                    # First balance scene/scale coverage; then spend cached capacity
+                    # before requesting additional pixels to meet the AOI total.
+                    for pass_number in range(4):
+                        relaxed = pass_number > 0
+                        active_scale_limits = scale_limits if pass_number < 2 else {width: quota for width in config["widths"]}
+                        for scene_number, scene in enumerate(scenes):
+                            if index.count(area=area["id"]) >= quota:
+                                break
+                            # Fixed caps keep pause/resume from progressively favoring scene 1.
+                            if not relaxed and scene_number + 1 < len(scenes):
+                                scene_limit = allocate(quota, [item["item_id"] for item in scenes])[scene["item_id"]]
+                            else:
+                                scene_limit = quota - index.count(area=area["id"]) + index.count(area=area["id"], scene=scene["item_id"])
+                            if index.count(area=area["id"], scene=scene["item_id"]) >= scene_limit:
+                                continue
+                            plan_path = root / "catalog" / f"{area['id']}-{scene['item_id']}.json"
+                            print(f"Collecting {area['id']}: {scene['item_id']}", flush=True)
+                            try:
+                                with SceneReader(safe_asset(scene["visual"]), safe_asset(scene["scl"])) as reader:
+                                    metadata_path = root / "catalog" / (scene["item_id"] + ".json")
+                                    if not metadata_path.exists():
+                                        write_json(metadata_path, {**scene, **reader.metadata})
+                                    if plan_path.exists():
+                                        plans = json.loads(plan_path.read_text(encoding="utf-8"))
+                                    else:
+                                        # Rank useful terrain before requesting large RGB blocks.
+                                        # This coarse SCL view is a planning hint, not the final quality test.
+                                        scl_hint = reader.scl.read(1, out_shape=(256, 256), resampling=Resampling.nearest)
+                                        potential = ~np.isin(scl_hint, [0, 1, 3, 8, 9, 10])
+                                        rgb_hint = reader.src.read_masks((1, 2, 3), out_shape=(3, 256, 256))
+                                        potential &= np.all(rgb_hint > 0, axis=0)
+                                        plans = [p for p in blocks(reader.src, scene, area, config, potential)
+                                                 if p["potential_score"] > 0][:config["max_blocks_per_scene"]]
+                                        write_json(plan_path, plans)
+                                    index.register(plans)
+                                    for plan in plans:
+                                        if index.count(area=area["id"]) >= quota or index.count(area=area["id"], scene=scene["item_id"]) >= scene_limit:
                                             break
-                                        except RasterioIOError as error:
-                                            status = re.search(r"\b(401|403|404)\b", str(error))
-                                            attempts = index.db.execute("SELECT attempts FROM jobs WHERE job_id=?", (plan["job_id"],)).fetchone()[0]
-                                            next_retry = (datetime.now(timezone.utc) + timedelta(seconds=2**attempts)).isoformat()
-                                            with index.db:
-                                                index.db.execute("UPDATE jobs SET state='FAILED',error_type=?,next_retry=? WHERE job_id=?",
-                                                    (("http_" + status[0]) if status else type(error).__name__, next_retry, plan["job_id"]))
-                                            if status or attempts >= config["max_block_attempts"]:
+                                        if pass_number in (1, 2) and not (root / "cache/blocks" / (plan["job_id"] + ".npz")).exists():
+                                            continue
+                                        while True:
+                                            try:
+                                                process_block(index, reader, scene, area, plan, active_scale_limits, scene_limit)
                                                 break
-                                            time.sleep(min(2**attempts, 30))
-                                    block_count += 1
-                                    if stop_after_blocks is not None and block_count >= stop_after_blocks:
-                                        outcome = "paused"
-                                        return index.report()
-                        except RasterioIOError as error:
-                            index.manifest.setdefault("scene_failures", []).append({"item_id": scene["item_id"], "error_type": type(error).__name__})
-                            print(f"  Scene unavailable: {type(error).__name__}", flush=True)
+                                            except RasterioIOError as error:
+                                                status = re.search(r"\b(401|403|404)\b", str(error))
+                                                attempts = index.db.execute("SELECT attempts FROM jobs WHERE job_id=?", (plan["job_id"],)).fetchone()[0]
+                                                next_retry = (datetime.now(timezone.utc) + timedelta(seconds=2**attempts)).isoformat()
+                                                with index.db:
+                                                    index.db.execute("UPDATE jobs SET state='FAILED',error_type=?,next_retry=? WHERE job_id=?",
+                                                        (("http_" + status[0]) if status else type(error).__name__, next_retry, plan["job_id"]))
+                                                if status or attempts >= config["max_block_attempts"]:
+                                                    break
+                                                time.sleep(min(2**attempts, 30))
+                                        block_count += 1
+                                        if stop_after_blocks is not None and block_count >= stop_after_blocks:
+                                            outcome = "paused"
+                                            return index.report()
+                            except RasterioIOError as error:
+                                index.manifest.setdefault("scene_failures", []).append({"item_id": scene["item_id"], "error_type": type(error).__name__})
+                                print(f"  Scene unavailable: {type(error).__name__}", flush=True)
+                if index.count() >= limit or not redistribute:
+                    break
+                if quota_round and index.count() == before_round:
+                    break
+                counts = {area["id"]: index.count(area=area["id"]) for area in config["areas"]}
+                next_limits = refill_limits(limit, config["areas"], counts, limits)
+                if sum(next_limits.values()) <= index.count():
+                    break
+                limits = next_limits
+                index.manifest["quota_redistribution"] = True
+                print(f"Redistributing quota: {index.count()}/{limit} candidates", flush=True)
             outcome = "complete" if index.count() >= limit else "partial"
             return index.report()
         except KeyboardInterrupt:
