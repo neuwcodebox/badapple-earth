@@ -2,6 +2,8 @@
 
 이 문서는 [TECH](TECH.md)의 형태 검색 세부 계약이다. 사용자 제공 [v2 원문](history/Bad_Apple_Shape_Matching_SPEC_v2.original.md)의 전체 파이프라인을 구현하며, 아래 규칙으로 모호한 부분을 확정한다. 실제 실행 상태와 성과는 [PLAN](PLAN.md)에 둔다.
 
+**채택 상태:** 비교 실험으로 보존한다. 같은 10만 후보·10초 구간의 사용자 재생 평가에서 MSE가 더 나았으며 기본 제작은 MSE다. 아래는 재현 가능한 실험 계약으로 유지한다.
+
 ## 입력과 특징
 
 - 기존 수집 snapshot의 모든 유효 장소와 0/90/180/270도 view를 사용한다. 장소·회전·중앙 크롭 recipe는 기존 `canonical-quarter-turn-center-crop-v1`과 같다. 0도 view ID도 보존한다.
