@@ -20,7 +20,7 @@ from rasterio.windows import Window
 
 from ..evidence import write_json
 from ..features import EXTRACTION_VERSION, canonical_image, extract
-from ..imagery import SceneReader, quality_tables, window_quality, window_location
+from ..imagery import QUALITY_POLICY, SceneReader, quality_tables, window_quality, window_location
 from ..sample import validate_config as validate_sample_config
 from ..sources.sentinel import discover, safe_asset
 from .storage import Index, writer_lock
@@ -106,11 +106,14 @@ def cached_block(index: Index, reader: SceneReader, plan: dict):
     path = index.root / "cache/blocks" / (plan["job_id"] + ".npz")
     if path.exists():
         with np.load(path, allow_pickle=False) as data:
-            return data["rgb"], data["valid"], data["scl"]
+            rgb, valid, scl = data["rgb"], data["valid"], data["scl"]
+            if "mask_policy" not in data and getattr(reader, "zero_nodata_masks", False):
+                valid = np.any(rgb != 0, axis=0)
+            return rgb, valid, scl
     rgb, valid, scl = reader.read_block(Window(*plan["read_window"]))
     temporary = path.with_suffix(".tmp")
     with temporary.open("wb") as stream:
-        np.savez_compressed(stream, rgb=rgb, valid=valid, scl=scl)
+        np.savez_compressed(stream, rgb=rgb, valid=valid, scl=scl, mask_policy=np.array(QUALITY_POLICY))
     temporary.replace(path)
     return rgb, valid, scl
 
@@ -201,6 +204,7 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
             "ground_width_m": ground_width, "ground_height_m": ground_height,
             "source_gsd": list(reader.src.res), "valid_ratio": quality["valid_ratio"],
             "local_cloud_ratio": quality["local_cloud_ratio"], "cloud_quality": "scl",
+            "quality_policy": QUALITY_POLICY,
             "gray_mean": float(coarse.mean()), "gray_std": float(coarse.std()),
             "uniform": float(coarse.std()) < 2, "dhash": dhash, "near_duplicate_of": near,
             "extraction_version": EXTRACTION_VERSION, "rotation_degrees": 0,
@@ -299,7 +303,7 @@ def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int
                                         scl_hint = reader.scl.read(1, out_shape=(256, 256), resampling=Resampling.nearest)
                                         potential = ~np.isin(scl_hint, [0, 1, 3, 8, 9, 10])
                                         rgb_hint = reader.src.read_masks((1, 2, 3), out_shape=(3, 256, 256))
-                                        potential &= np.all(rgb_hint > 0, axis=0)
+                                        potential &= np.any(rgb_hint > 0, axis=0)
                                         plans = [p for p in blocks(reader.src, scene, area, config, potential)
                                                  if p["potential_score"] > 0][:config["max_blocks_per_scene"]]
                                         write_json(plan_path, plans)
@@ -356,6 +360,7 @@ def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int
             index.manifest["elapsed_seconds_last_run"] = round(time.monotonic() - started, 3)
             index.manifest["network_requests"] = "unmeasured"
             index.manifest["network_bytes"] = "unmeasured"
+            index.manifest["quality_policy"] = QUALITY_POLICY
             index.manifest["scale_quota_policy"] = "equal shares first; remaining AOI quota can use other valid scales"
             write_json(root / "manifest.json", index.manifest)
             index.close()

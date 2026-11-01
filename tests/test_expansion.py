@@ -39,6 +39,33 @@ def test_overlapping_window_quality_matches_native_mask_contract():
             assert result[key] == pytest.approx(expected[key])
 
 
+def test_rgb_dataset_mask_keeps_zero_channels_and_repairs_cached_nodata_masks(tmp_path):
+    import rasterio
+    from rasterio.transform import from_origin
+    from rasterio.windows import Window
+    from badapple_earth.imagery import SceneReader
+    from badapple_earth.collection.pipeline import cached_block
+    rgb = np.full((3, 16, 16), 60, dtype=np.uint8)
+    rgb[0, 4, 4] = 0
+    rgb[:, 5, 5] = 0
+    profile = {"driver": "GTiff", "width": 16, "height": 16, "dtype": "uint8",
+               "crs": "EPSG:32633", "transform": from_origin(500000, 1000, 10, 10), "nodata": 0}
+    with rasterio.open(tmp_path / "rgb.tif", "w", count=3, **profile) as dst:
+        dst.write(rgb)
+    with rasterio.open(tmp_path / "scl.tif", "w", count=1, **profile) as dst:
+        dst.write(np.full((16, 16), 4, np.uint8), 1)
+    with SceneReader(str(tmp_path / "rgb.tif"), str(tmp_path / "scl.tif")) as reader:
+        _, valid, scl = reader.read_block(Window(0, 0, 16, 16))
+        assert valid[4, 4] and not valid[5, 5]
+        directory = tmp_path / "cache/blocks"
+        directory.mkdir(parents=True)
+        np.savez(directory / "old.npz", rgb=rgb, valid=np.all(rgb > 0, axis=0), scl=scl)
+        class StoredIndex:
+            root = tmp_path
+        _, repaired, _ = cached_block(StoredIndex(), reader, {"job_id": "old"})
+        assert repaired[4, 4] and not repaired[5, 5]
+
+
 def test_inline_rotations_are_published_with_batch_and_need_no_source_read(tmp_path, monkeypatch):
     from badapple_earth.matching.photos import PhotoCache
     settings = config()

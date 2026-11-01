@@ -94,6 +94,7 @@ def match(target_root: Path, index_root: Path, output: Path, top_k=20,
                             "rotation_direction": "clockwise", "view_version": VIEW_VERSION,
                             "view_source_window": [float(v) for v in tile.get("view_source_window", tile.get("window", []))],
                             "source_footprint_json": tile.get("source_footprint_json", tile.get("footprint_json")),
+                            "quality_policy": tile.get("quality_policy", "rgb-all-band-mask-v1"),
                             "base_feature_row": tile.get("base_feature_row", tile["feature_row"]),
                             "view_feature_row": tile.get("view_feature_row")})
     pq.write_table(pa.Table.from_pylist(matches), output / "matches.parquet", compression="zstd")

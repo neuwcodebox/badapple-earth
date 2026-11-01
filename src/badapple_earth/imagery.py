@@ -9,12 +9,13 @@ import numpy as np
 from PIL import Image
 from pyproj import Transformer
 import rasterio
-from rasterio.enums import Resampling
+from rasterio.enums import MaskFlags, Resampling
 from rasterio.vrt import WarpedVRT
 from rasterio.windows import Window
 from shapely.geometry import Point, shape
 
 EXTRACTION_VERSION = "p1-rgb-native-pillow-box-v1"
+QUALITY_POLICY = "rgb-dataset-mask-scl-v2"
 GDAL_OPTIONS = {
     "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
     "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif",
@@ -139,6 +140,8 @@ class SceneReader:
             src = self.src
             if src.count != 3 or any(dtype != "uint8" for dtype in src.dtypes) or not src.crs:
                 raise ValueError("Expected a georeferenced 3-band uint8 visual asset")
+            self.zero_nodata_masks = all(set(flags) == {MaskFlags.nodata} and nodata == 0
+                                         for flags, nodata in zip(src.mask_flag_enums, src.nodatavals))
             scl = self.stack.enter_context(rasterio.open(self.scl_href))
             if scl.count != 1 or scl.dtypes[0] != "uint8" or not scl.crs:
                 raise ValueError("Expected a georeferenced 1-band uint8 SCL asset")
@@ -152,6 +155,7 @@ class SceneReader:
                 "bands": ["red", "green", "blue"], "block_shapes": src.block_shapes,
                 "source_gsd": list(src.res), "scl_crs": scl.crs.to_string(),
                 "scl_transform": list(scl.transform)[:6], "scl_shape": [scl.height, scl.width],
+                "mask_flags": [[flag.name for flag in flags] for flags in src.mask_flag_enums],
             }
             return self
         except BaseException:
@@ -164,8 +168,9 @@ class SceneReader:
     def read_block(self, window: Window):
         src = self.src
         rgb = src.read((1, 2, 3), window=window)
-        # All RGB band masks must be valid, rather than an OR-combined dataset mask.
-        valid = np.all(src.read_masks((1, 2, 3), window=window) > 0, axis=0)
+        # RGB zeros can be valid dark channels. Respect dataset-wide masks and
+        # Rasterio's RGB nodata OR semantics; SCL defects are filtered separately.
+        valid = src.dataset_mask(window=window) > 0
         scl = self.scl.read(1, window=window)
         return rgb, valid, scl
 
