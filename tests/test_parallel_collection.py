@@ -30,7 +30,7 @@ def test_rgb_shard_survives_reopen_and_materializes_rotated_views_without_networ
     images = [Image.fromarray(np.random.default_rng(n).integers(0, 256, (24, 32, 3), dtype=np.uint8))
               for n in range(2)]
     index = Index(tmp_path, settings)
-    plan = {"job_id": "job", "windows": [[0, 0, 32, 24], [32, 0, 32, 24]]}
+    plan = {"job_id": "job", "aoi_id": "test", "windows": [[0, 0, 32, 24], [32, 0, 32, 24]]}
     index.register([plan])
     rows = [{"tile_id": str(n), "aoi_id": "test", "terrain_group": "test", "scene_id": "scene",
              "window": plan["windows"][n], "dhash": "0000000000000000", "sample_key": str(n),
@@ -39,6 +39,10 @@ def test_rgb_shard_survives_reopen_and_materializes_rotated_views_without_networ
     index.commit(plan, 2, True, rows, [v[0] for v in values], [v[1] for v in values], [], {},
                  rotations={"images": images, "scene": {"affine": [0.001, 0, 0, 0, -0.001, 1], "crs": "EPSG:4326"}},
                  photos=images)
+    native = tmp_path / "cache/blocks/job.npz"
+    native.write_bytes(b"regenerable native block")
+    index.release_blocks("test")
+    assert not native.exists()
     index.close()
     reopened = Index(tmp_path, settings)
     assert reopened.count() == 2

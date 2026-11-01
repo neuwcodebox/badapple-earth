@@ -142,6 +142,26 @@ class Index:
                               (self.config["report_samples"] - 1,)).fetchone()
         return row[0] if row else None
 
+    def release_blocks(self, area_id):
+        """Evict regenerable native blocks once an AOI pass has finished.
+
+        The collector's sole writer calls this between AOIs. Accepted RGB and
+        views remain in immutable shards; later quota increases can read new
+        source windows again without retaining every unused native pixel.
+        """
+        if not self.config.get("cache_rgb", False):
+            return
+        released = 0
+        for row in self.db.execute("SELECT job_id FROM jobs WHERE json_extract(plan, '$.aoi_id')=?", (area_id,)):
+            path = self.root / "cache/blocks" / (row[0] + ".npz")
+            if path.exists():
+                released += path.stat().st_size
+                path.unlink()
+        if released:
+            self.manifest["evicted_native_block_bytes"] = self.manifest.get("evicted_native_block_bytes", 0) + released
+            # Account for the deletion at the next resource check.
+            self.last_disk_scan = -float("inf")
+
     def near_duplicate(self, scene_id, window, dhash, coarse):
         left, top, width, height = window
         rows = self.db.execute(

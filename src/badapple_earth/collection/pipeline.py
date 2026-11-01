@@ -252,6 +252,9 @@ def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int
         block_count = 0
         try:
             limits = area_quotas(limit, config["areas"])
+            for area_id, quota in limits.items():
+                if index.count(area=area_id) >= quota:
+                    index.release_blocks(area_id)
             resources(index)
             # A completed invocation exits before any catalogue/raster requests.
             if all(index.count(area=area) >= quota for area, quota in limits.items()):
@@ -335,6 +338,7 @@ def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int
                             except RasterioIOError as error:
                                 index.manifest.setdefault("scene_failures", []).append({"item_id": scene["item_id"], "error_type": type(error).__name__})
                                 print(f"  Scene unavailable: {type(error).__name__}", flush=True)
+                    index.release_blocks(area["id"])
                 if index.count() >= limit or not redistribute:
                     break
                 if quota_round and index.count() == before_round:

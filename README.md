@@ -113,7 +113,7 @@ uv run badapple-earth render --targets data/targets/38s-10s-6fps --run data/runs
 uv run badapple-earth compare --baseline data/runs/p4-100k --run data/runs/p5-1m
 ```
 
-`collect-parallel`은 AOI를 결정적으로 분할해 독립 인덱스 네 개를 만들며 같은 명령으로 재개한다. 작업별 로그·설정과 전체 `collection.json`은 출력 폴더에 남긴다. 완료를 기다리는 동안 인덱스를 반복 스캔하지 않는다. 각 작업의 RAM 예산은 3GiB, 디스크 예산은 55GiB이고 모든 작업은 같은 드라이브의 여유 공간 하한 20GiB를 지킨다. 신규 RGB 자체는 약 126GiB를 차지하므로 기존 실행보다 저장 공간이 많이 필요하다. 수집 중 RGB·네 방향 특징을 함께 저장하고 사진 출력에서 재사용한다. 실제 수집·비교 완료 여부는 [PLAN](docs/PLAN.md)에서 확인한다.
+`collect-parallel`은 AOI를 결정적으로 분할해 독립 인덱스 네 개를 만들며 같은 명령으로 재개한다. 작업별 로그·설정과 전체 `collection.json`은 출력 폴더에 남긴다. 완료를 기다리는 동안 인덱스를 반복 스캔하지 않는다. 각 작업의 RAM 예산은 3GiB, 디스크 예산은 55GiB이고 모든 작업은 같은 드라이브의 여유 공간 하한 20GiB를 지킨다. 신규 RGB 자체는 약 126GiB를 차지하므로 기존 실행보다 저장 공간이 많이 필요하다. 수집 중 RGB·네 방향 특징을 함께 저장하고 사진 출력에서 재사용한다. RGB를 보관하는 수집에서는 AOI 처리를 마치면 재생 가능한 원본 블록 캐시를 비워 중복 저장량을 제한한다. 이후 quota를 늘릴 때 아직 수집하지 않은 창의 원본을 다시 읽을 수 있다. 실제 수집·비교 완료 여부는 [PLAN](docs/PLAN.md)에서 확인한다.
 
 ### 7. 선택 실험: 형태 우선 검색과 같은 구간 비교
 
