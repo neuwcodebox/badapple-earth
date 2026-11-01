@@ -1,10 +1,13 @@
 """Filled-region, signed-distance and exact joint directional edge costs."""
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt, gaussian_filter, maximum_filter, minimum_filter
-from scipy.spatial import cKDTree
+from scipy.ndimage import gaussian_filter, maximum_filter, minimum_filter
 
 from .features import descriptors, gradient, resize_float, structures
+from .distance import BACKEND as EDT_BACKEND, signed_distance
+from .chamfer import BACKEND as CHAMFER_BACKEND, directed_minima, offsets
+from .cache import mask_key
+
 
 
 def boundary(mask):
@@ -18,11 +21,14 @@ def boundary(mask):
 
 
 def edges(mask):
-    points = np.argwhere(boundary(mask)).astype(np.float64)
+    points = np.argwhere(boundary(mask)).astype(np.int32)
     gx, gy = gradient(gaussian_filter(mask.astype(np.float32), .75, mode="reflect"))
-    theta = np.mod(np.arctan2(gy, gx), np.pi)[tuple(points.astype(int).T)] if len(points) else np.empty(0)
-    return {"points": points, "theta": theta, "sorted_theta": np.sort(theta),
-            "tree": cKDTree(points) if len(points) else None}
+    positions = tuple(points.T)
+    theta = np.mod(np.arctan2(gy[positions], gx[positions]), np.pi) if len(points) else np.empty(0, np.float32)
+    grid = np.full(mask.shape, -1, np.float32)
+    if len(points):
+        grid[tuple(points.T)] = theta
+    return {"points": points, "theta": theta, "sorted_theta": np.sort(theta), "angle_grid": grid}
 
 
 def angular_nearest(theta, sorted_other):
@@ -41,14 +47,9 @@ def chamfer(first, second, radius):
     """
     if not len(first["points"]) or not len(second["points"]):
         return float(bool(len(first["points"]) or len(second["points"])))
-    forward = .8 + .2 * angular_nearest(first["theta"], second["sorted_theta"])
-    backward = .8 + .2 * angular_nearest(second["theta"], first["sorted_theta"])
-    nearby = first["tree"].sparse_distance_matrix(second["tree"], radius, output_type="coo_matrix")
-    angle = np.abs(first["theta"][nearby.row] - second["theta"][nearby.col])
-    angle = np.minimum(angle, np.pi - angle) / (np.pi / 2)
-    cost = .8 * np.minimum(nearby.data.astype(np.float32) / radius, 1) + .2 * angle
-    np.minimum.at(forward, nearby.row, cost)
-    np.minimum.at(backward, nearby.col, cost)
+    neighbourhood, spatial = offsets(radius)
+    forward = directed_minima(first["points"], first["theta"], second["angle_grid"], second["sorted_theta"], neighbourhood, spatial)
+    backward = directed_minima(second["points"], second["theta"], first["angle_grid"], first["sorted_theta"], neighbourhood, spatial)
     return float(.5 * (np.mean(forward) + np.mean(backward)))
 
 
@@ -58,8 +59,7 @@ def sdf(mask):
     if np.all(mask):
         return np.ones(mask.shape, np.float32)
     radius = .05 * min(mask.shape)
-    phi = (distance_transform_edt(mask) - distance_transform_edt(~mask)).astype(np.float32)
-    return np.clip(phi, -radius, radius) / radius
+    return signed_distance(mask, radius)
 
 
 def region_distance(first, second):
@@ -145,9 +145,11 @@ def ordered_choice(options, key):
     return min(paths, key=lambda p: (p[0], [v["threshold"] for v in p[1]]))[1]
 
 
-def score(gray, prepared, fine=False):
+def score(gray, prepared, fine=False, cache=None):
     width = gray.shape[1] if fine else 128
     scale_results = []
+    cache_start = (cache.hits, cache.misses) if cache else (0, 0)
+    chamfer_evaluated = chamfer_possible = 0
     for image, masks in zip(structures(gray, width), prepared["geometry"][width]):
         options = []
         for expected in masks:
@@ -155,20 +157,44 @@ def score(gray, prepared, fine=False):
             for threshold in thresholds(image, expected["area"]):
                 mask = image <= threshold
                 d_region = region_distance(expected["mask"], mask)
-                d_sdf = float(np.mean(np.abs(expected["phi"] - sdf(mask))) / 2)
-                d_chamfer = chamfer(expected["edges"], edges(mask), .05 * min(mask.shape)) if fine else 0.
+                key = mask_key(mask) if cache else None
+                phi = cache.get(("sdf", key), lambda: sdf(mask)) if cache else sdf(mask)
+                d_sdf = float(np.mean(np.abs(expected["phi"] - phi)) / 2)
                 row = {"threshold": float(threshold), "target_level": expected["level"],
-                       "D_sdf": d_sdf, "D_region": d_region, "D_chamfer": d_chamfer,
+                       "D_sdf": d_sdf, "D_region": d_region, "D_chamfer": 0.,
                        "D_coarse": (.40*d_sdf + .25*d_region) / .65,
-                       "D_shape": .40*d_sdf + .35*d_chamfer + .25*d_region}
+                       "D_shape": .40*d_sdf + .25*d_region,
+                       "_done": not fine, "_mask": mask, "_key": key, "_expected": expected}
                 choices.append(row)
             options.append(choices)
-        chosen = ordered_choice(options, "D_shape" if fine else "D_coarse")
+        if fine:
+            chamfer_possible += sum(len(choices) for choices in options)
+            # Unknown Chamfer costs are nonnegative lower bounds. Resolve only
+            # the optimistic best ordered path until its entire cost is exact.
+            # This preserves each view's true minimum and the final +.01 band.
+            while True:
+                chosen = ordered_choice(options, "D_shape")
+                unresolved = [row for row in chosen if not row["_done"]]
+                if not unresolved:
+                    break
+                for row in unresolved:
+                    mask = row["_mask"]
+                    contour = cache.get(("edges", row["_key"]), lambda: edges(mask)) if cache else edges(mask)
+                    row["D_chamfer"] = chamfer(row["_expected"]["edges"], contour, .05*min(mask.shape))
+                    row["D_shape"] = .40*row["D_sdf"] + .35*row["D_chamfer"] + .25*row["D_region"]
+                    row["_done"] = True
+                    chamfer_evaluated += 1
+        else:
+            chosen = ordered_choice(options, "D_coarse")
+        chosen = [{key: value for key, value in row.items() if not key.startswith("_")} for row in chosen]
         scale_results.append({"levels": chosen, **{key: float(np.mean([row[key] for row in chosen]))
                                                    for key in ["D_sdf", "D_region", "D_chamfer", "D_coarse", "D_shape"]}})
     return {**{key: float(np.mean([s[key] for s in scale_results]))
                for key in ["D_sdf", "D_region", "D_chamfer", "D_coarse", "D_shape"]},
             "scale_scores": scale_results,
+            "geometry_work": {"chamfer_evaluated": chamfer_evaluated, "chamfer_possible": chamfer_possible,
+                              "mask_cache_hits": cache.hits-cache_start[0] if cache else 0,
+                              "mask_cache_misses": cache.misses-cache_start[1] if cache else 0},
             "chosen_thresholds": [[r["threshold"] for r in s["levels"]] for s in scale_results]}
 
 

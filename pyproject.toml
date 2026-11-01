@@ -19,6 +19,7 @@ dependencies = [
   "psutil>=7,<9",
   "av>=15,<19",
   "scipy>=1.14,<2",
+  "numba>=0.68,<1",
 ]
 
 [project.scripts]

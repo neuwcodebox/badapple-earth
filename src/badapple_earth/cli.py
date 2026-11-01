@@ -61,6 +61,7 @@ def main() -> int:
     shape_match.add_argument("--index", required=True, type=Path)
     shape_match.add_argument("--output", required=True, type=Path)
     shape_match.add_argument("--config", type=Path, default=Path("config/shape-v2.json"))
+    shape_match.add_argument("--stop-after-targets", type=int, help="Checkpoint after this many newly completed targets")
     shape_render = commands.add_parser("shape-render", help="Render real shape-selected photos, diagnostics and optional baseline comparison")
     shape_render.add_argument("--targets", required=True, type=Path)
     shape_render.add_argument("--index", required=True, type=Path)
@@ -112,8 +113,8 @@ def main() -> int:
             print(f"Shape index: {result['places']} places / {result['view_count']} views")
         elif args.command == "shape-match":
             from .shape.search import match
-            result = match(args.targets, args.index, args.output, json.loads(args.config.read_text(encoding="utf-8")))
-            print(f"Shape match: {result['target_count']} targets, {result['low_visibility_count']} low visibility")
+            result = match(args.targets, args.index, args.output, json.loads(args.config.read_text(encoding="utf-8")), args.stop_after_targets)
+            print(f"Shape match {result['status']}: {result['completed_targets']}/{result['target_count']} targets")
         elif args.command == "shape-render":
             from .shape.output import materialize
             result = materialize(args.targets, args.index, args.run, args.baseline)

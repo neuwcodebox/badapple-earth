@@ -18,6 +18,7 @@ from PIL import Image
 import psutil
 import pyarrow as pa
 import pyarrow.parquet as pq
+import scipy
 from rasterio.errors import RasterioIOError
 from rasterio.windows import Window
 
@@ -125,7 +126,8 @@ def build(index_root: Path, root: Path, workers=8):
                     "view_version": VIEW_VERSION, "source_index_id": source_manifest["index_id"],
                     "source_snapshot": snapshot, "canonical_size": source_manifest["canonical_size"],
                     "rotations": list(ANGLES), "shards": [], "status": "building", "backend": "numpy-scipy-cpu-float32",
-                    "numpy_version": np.__version__, "cache_kind": "shared-lossless-rgb-recipe"}
+                    "numpy_version": np.__version__, "scipy_version": scipy.__version__,
+                    "cache_kind": "shared-lossless-rgb-recipe"}
         if path.exists():
             manifest = read_manifest(root)
             if manifest["index_id"] != cache_id:
@@ -220,19 +222,27 @@ class Store:
 
     @lru_cache(maxsize=32)
     def rows(self, shard, name="views.parquet"):
-        return pq.read_table(self.root / "shards" / shard / name).to_pylist()
+        return pq.read_table(self.root / "shards" / shard / name, use_threads=False).to_pylist()
 
     def row(self, ref):
         shard, position = ref
         view = self.rows(shard)[position]
         if view["feature_row"] != position:
             raise ValueError("Shape feature-row mapping differs")
-        return {**self.rows(shard, "tiles.parquet")[view["base_row"]], **view, "shape_shard": shard}
+        base = self.rows(shard, "tiles.parquet")[view["base_row"]]
+        return {**base, **view, "shape_shard": shard, "source_feature_row": base["feature_row"],
+                "source_shard_id": base.get("shard_id")}
 
     def rgb(self, ref):
-        row = self.rows(ref[0])[ref[1]]
-        image = Image.fromarray(np.asarray(self.array(ref[0], "rgb.npy")[row["base_row"]]))
-        return rotate_image(image, row["rotation_degrees"], image.size, row["rotation_crop"])
+        # The immutable shard layout is base-major, then 0/90/180/270.
+        # Pixel access needs no Parquet dictionaries or repeated metadata parsing.
+        shard, position = ref
+        data = self.array(shard, "rgb.npy")
+        angles = self.manifest["rotations"]
+        if not 0 <= position < self.shards[shard]["rows"] or len(data) * len(angles) != self.shards[shard]["rows"]:
+            raise ValueError("Shared RGB/view row mapping differs")
+        image = Image.fromarray(np.asarray(data[position // len(angles)]))
+        return rotate_image(image, angles[position % len(angles)], image.size)
 
     def gray(self, ref):
         return np.asarray(self.rgb(ref).convert("L")).copy()

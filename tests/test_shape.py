@@ -50,6 +50,31 @@ def test_exact_directional_joint_minimum_empty_and_border():
     assert not len(edges(full)['points']) and np.all(sdf(full)==1) and np.all(sdf(~full)==-1)
 
 
+def test_fused_sdf_equals_exact_reference_without_outside_padding():
+    from scipy.ndimage import distance_transform_edt
+    rng=np.random.default_rng(71)
+    for shape in [(1,1),(1,19),(17,1),(96,128),(191,256)]:
+        for fraction in [0,.001,.1,.5,.9,.999,1]:
+            mask=rng.random(shape)<fraction
+            radius=.05*min(shape)
+            reference=(np.full(shape,-1,np.float32) if not mask.any() else np.ones(shape,np.float32) if mask.all()
+                       else np.clip((distance_transform_edt(mask)-distance_transform_edt(~mask)).astype(np.float32),-radius,radius)/radius)
+            assert np.array_equal(sdf(mask),reference)
+
+
+def test_mask_cache_is_byte_bounded_and_keeps_grid_identity():
+    from badapple_earth.shape.cache import MaskCache, mask_key
+    cache=MaskCache(512)
+    key=mask_key(np.ones((2,8),bool))
+    assert key != mask_key(np.ones((4,4),bool))
+    first=cache.get(key,lambda:np.arange(32,dtype=np.float32))
+    assert cache.get(key,lambda:pytest.fail('Same mask must reuse its value')) is first
+    for i in range(20):
+        cache.get(('other',i),lambda:np.zeros(32,np.float32))
+        assert cache.bytes<=cache.budget
+    assert cache.hits==1 and len(cache.items)<20
+
+
 def test_geometry_holes_location_polarity_fade_and_shape_first_selection():
     image = np.full((48, 64), 255, np.uint8); image[12:36, 20:44] = 0
     prepared = target(image)
@@ -112,6 +137,13 @@ def test_complete_local_pipeline_resume_and_original_color_output(tmp_path):
     analysis=tmp_path/'analysis'
     m=build(source,analysis,workers=2)
     assert m['places']==3 and m['view_count']==12
+    store=Store(analysis)
+    from badapple_earth.matching.views import rotate_image
+    for shard in store.manifest['shards']:
+        for position,row in enumerate(store.rows(shard['shard_id'])):
+            original=Image.fromarray(np.asarray(store.array(shard['shard_id'],'rgb.npy')[row['base_row']]))
+            expected=rotate_image(original,row['rotation_degrees'],original.size,row['rotation_crop'])
+            assert np.array_equal(np.asarray(store.rgb((shard['shard_id'],position))),np.asarray(expected))
     assert build(source,analysis,workers=2)['view_count']==12
     targets=tmp_path/'targets'; targets.mkdir()
     target_rows=[]

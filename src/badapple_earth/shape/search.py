@@ -13,12 +13,14 @@ from PIL import Image
 import pyarrow as pa
 import pyarrow.parquet as pq
 import scipy
+import numba
 
 from ..collection.windows import identity
 from ..collection.storage import writer_lock
 from ..evidence import write_json
 from .features import VERSION
-from .geometry import score, select, target, tone
+from .geometry import CHAMFER_BACKEND, EDT_BACKEND, score, select, target, tone
+from .cache import MaskCache
 from .index import Store
 
 DEFAULT = {"retrieval_k": 2048, "coarse_k": 256, "path_keep": 64,
@@ -28,10 +30,13 @@ DEFAULT = {"retrieval_k": 2048, "coarse_k": 256, "path_keep": 64,
 
 
 def init_worker(index_root, target_root):
-    global _store, _target_root, _target_rows
+    global _store, _target_root, _target_rows, _mask_cache
     _store = Store(Path(index_root))
+    pa.set_cpu_count(1)
+    pa.set_io_thread_count(1)
     _target_root = Path(target_root)
     _target_rows = pq.read_table(_target_root / "targets.parquet").to_pylist()
+    _mask_cache = MaskCache()
 
 
 @lru_cache(maxsize=2)
@@ -44,7 +49,7 @@ def worker_score(task):
     slot, ref, fine = task
     prepared = worker_target(slot)
     gray = _store.gray(ref)
-    result = score(gray, prepared, fine)
+    result = score(gray, prepared, fine, _mask_cache)
     if fine:
         result.update(tone(gray, prepared))
     else:
@@ -153,12 +158,12 @@ def uniform_choices(store, prepared, config):
                   "eligible_count": len(accepted)}
 
 
-def match(target_root: Path, index_root: Path, output: Path, config=None):
+def match(target_root: Path, index_root: Path, output: Path, config=None, stop_after_targets=None):
     with writer_lock(output):
-        return _match(target_root, index_root, output, config)
+        return _match(target_root, index_root, output, config, stop_after_targets)
 
 
-def _match(target_root, index_root, output, config):
+def _match(target_root, index_root, output, config, stop_after_targets):
     config = {**DEFAULT, **(config or {})}
     for name in ["retrieval_k", "coarse_k", "path_keep", "workers", "query_batch", "vector_batch"]:
         if type(config[name]) is not int or config[name] < 1:
@@ -178,7 +183,10 @@ def _match(target_root, index_root, output, config):
                 "candidate_count": store.manifest["places"], "view_count": store.manifest["view_count"],
                 "target_count": target_manifest["count"], "rotations": store.manifest["rotations"],
                 "view_version": store.manifest["view_version"], "status": "matching", "numpy_version": np.__version__,
-                "scipy_version": scipy.__version__, "backend": "numpy-scipy-cpu-float32; scipy EDT/tree internal float64",
+                "scipy_version": scipy.__version__, "numba_version": numba.__version__,
+                "backend": "numpy-scipy-numba-cpu; fused exact EDT and capped-grid Chamfer",
+                "edt_backend": EDT_BACKEND,
+                "chamfer_backend": CHAMFER_BACKEND, "mask_cache_payload_bytes_per_worker": 128*1024**2,
                 "selection": "visibility, shape tolerance, tone, shape, view_id", "visual_review": "not_performed"}
     if manifest_path.exists() and json.loads(manifest_path.read_text())["run_id"] != run_id:
         raise ValueError("Run configuration differs; use another output")
@@ -198,14 +206,23 @@ def _match(target_root, index_root, output, config):
         unions = retrieve(store, prepared, config, output)
     db = sqlite3.connect(output / "progress.sqlite")
     db.execute("CREATE TABLE IF NOT EXISTS targets (slot INTEGER PRIMARY KEY, state TEXT, error_type TEXT)")
+    db.execute("UPDATE targets SET state='PENDING' WHERE state='RUNNING'"); db.commit()
     started = time.monotonic()
+    processed = 0
     try:
         with ProcessPoolExecutor(max_workers=config["workers"], mp_context=get_context("spawn"),
                                  initializer=init_worker, initargs=(str(index_root), str(target_root))) as executor:
             for slot, (item, source_target, union) in enumerate(zip(prepared, target_rows, unions)):
                 final_path = output / "scores" / f"{slot:04d}.json"
                 if final_path.exists():
+                    prior = json.loads(final_path.read_text())
+                    if "edt_backend" not in prior:
+                        prior["edt_backend"] = "scipy-distance-transform-edt"
+                        prior["chamfer_backend"] = "scipy-cKDTree-exact-capped"
+                        write_json(final_path, prior)
+                    db.execute("INSERT OR REPLACE INTO targets VALUES (?, 'DONE', NULL)", (slot,)); db.commit()
                     continue
+                target_started = time.monotonic()
                 db.execute("INSERT OR REPLACE INTO targets VALUES (?,?,?)", (slot, "RUNNING", None)); db.commit()
                 if item["near_uniform"]:
                     ranked, chosen = uniform_choices(store, item, config)
@@ -217,7 +234,8 @@ def _match(target_root, index_root, output, config):
                         coarse_rows = pq.read_table(coarse_path).to_pylist()
                         coarse = {(r["shape_shard"], r["feature_row"]): r["D_coarse"] for r in coarse_rows}
                     else:
-                        refs = list(union)
+                        refs = sorted(union)  # Process neighbouring views from the same RGB shard together.
+                        print(f"Shape screening {slot+1}/{len(prepared)}: {len(refs)} views", flush=True)
                         coarse = dict(executor.map(worker_score, ((slot, ref, False) for ref in refs), chunksize=16))
                         temporary = coarse_path.with_suffix(".tmp")
                         pq.write_table(pa.Table.from_pylist([{"shape_shard": ref[0], "feature_row": ref[1],
@@ -227,27 +245,37 @@ def _match(target_root, index_root, output, config):
                     ordered = sorted(coarse, key=lambda r: (coarse[r], union[r]["view_id"]))
                     fine_refs = set(ordered[:config["coarse_k"]])
                     fine_refs.update(ref for ref, row in union.items() if any(rank <= config["path_keep"] for rank in row["path_ranks"].values()))
-                    fine_refs = sorted(fine_refs, key=lambda ref: union[ref]["view_id"])
+                    fine_refs = sorted(fine_refs)
                     fine_path = output / "scores" / f"{slot:04d}-fine.json"
                     if fine_path.exists():
                         ranked = json.loads(fine_path.read_text())
                     else:
+                        print(f"Shape fine {slot+1}/{len(prepared)}: {len(fine_refs)} views", flush=True)
                         ranked = [{"ref": list(ref), **union[ref], **metrics, "D_coarse": coarse[ref]}
                                   for ref, metrics in executor.map(worker_score, ((slot, ref, True) for ref in fine_refs), chunksize=4)]
                         write_json(fine_path, ranked)
                     chosen = select(ranked, config["shape_tolerance"], config["min_contrast"])
                     coarse_count, fine_count = len(coarse), len(ranked)
                 result = {"slot": slot, "target_id": source_target["target_id"], "target_pts": source_target["source_pts"],
+                          "edt_backend": EDT_BACKEND,
+                          "chamfer_backend": CHAMFER_BACKEND,
                           "target_time": source_target["target_time"], "chosen": chosen,
                           "target_profile": {k: item[k] for k in ["near_uniform", "dark_fraction", "luma_range", "normalization", "gray_fraction", "levels", "rank_query_levels"]},
                           "candidate_count": coarse_count, "fine_count": fine_count,
+                          "elapsed_seconds": time.monotonic()-target_started,
                           "retrieval_truncated": not item["near_uniform"] and coarse_count < store.manifest["view_count"],
                           "rerank_truncated": not item["near_uniform"] and fine_count < coarse_count}
                 write_json(final_path, result)
                 db.execute("UPDATE targets SET state='DONE',error_type=NULL WHERE slot=?", (slot,)); db.commit()
                 print(f"Shape match {slot+1}/{len(prepared)}: {coarse_count} retrieved, {fine_count} fine; D_shape={chosen['D_shape']:.5f}, contrast={chosen['contrast_delta']:.4f}", flush=True)
+                processed += 1
+                if stop_after_targets is not None and processed >= stop_after_targets:
+                    manifest.update({"status": "paused", "completed_targets": slot+1})
+                    return manifest
         results = [json.loads((output / "scores" / f"{slot:04d}.json").read_text()) for slot in range(len(prepared))]
         manifest.update({"status": "complete", "low_visibility_count": sum(r["chosen"]["low_visibility"] for r in results),
+                         "completed_targets": len(results), "edt_backends_by_slot": {str(r['slot']): r['edt_backend'] for r in results},
+                         "chamfer_backends_by_slot": {str(r['slot']): r.get('chamfer_backend','scipy-cKDTree-exact-capped') for r in results},
                          "near_uniform_count": sum(r["target_profile"]["near_uniform"] for r in results),
                          "selected_shape_mean": float(np.mean([r["chosen"]["D_shape"] for r in results]))})
         return manifest

@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
 
 import numpy as np
 from PIL import Image
@@ -15,8 +17,41 @@ from ..evidence import checksum, contact_sheet, write_json
 from ..matching.output import render
 from ..matching.views import view_metadata
 from .features import structures
-from .geometry import sdf, target
+from .geometry import score, sdf, target, tone
 from .index import Store
+
+
+def baseline_score(paths):
+    target_path, photo_path = paths
+    with Image.open(target_path) as image:
+        prepared = target(np.asarray(image.convert("L")))
+    with Image.open(photo_path) as image:
+        gray = np.asarray(image.convert("L"))
+    if prepared["near_uniform"]:
+        return {"D_shape": None, **tone(gray, prepared)}
+    return {"D_shape": score(gray, prepared, True)["D_shape"], **tone(gray, prepared)}
+
+
+def evaluate_baseline(target_root, baseline, run_root, target_rows, selected, workers):
+    before = sorted(pq.read_table(baseline / "selected.parquet").to_pylist(), key=lambda row: row["slot"])
+    if [r["slot"] for r in before] != list(range(len(target_rows))):
+        raise ValueError("Baseline selected slots differ")
+    paths = [(target_root / frame["frame"], baseline / row["photo"]) for frame, row in zip(target_rows, before)]
+    with ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn")) as pool:
+        measured = list(pool.map(baseline_score, paths, chunksize=4))
+    rows = [{"slot": i, "baseline_D_shape": old["D_shape"], "shape_D_shape": new["D_shape"],
+             "baseline_contrast": old["contrast_delta"], "shape_contrast": new["contrast_delta"],
+             "near_uniform": new["near_uniform"]} for i, (old, new) in enumerate(zip(measured, selected))]
+    nonuniform = [r for r in rows if r["baseline_D_shape"] is not None]
+    result = {"metric": "same v2.1 geometry on both displayed photos; diagnostic only, does not alter retrieval",
+              "baseline_shape_mean": float(np.mean([r["baseline_D_shape"] for r in nonuniform])) if nonuniform else None,
+              "new_shape_mean": float(np.mean([r["shape_D_shape"] for r in nonuniform])) if nonuniform else None,
+              "shape_better_frames": sum(r["shape_D_shape"] < r["baseline_D_shape"] for r in nonuniform),
+              "shape_equal_frames": sum(r["shape_D_shape"] == r["baseline_D_shape"] for r in nonuniform),
+              "shape_worse_frames": sum(r["shape_D_shape"] > r["baseline_D_shape"] for r in nonuniform),
+              "per_target": rows}
+    write_json(run_root / "baseline-shape-evaluation.json", result)
+    return result
 
 
 def materialize(target_root: Path, index_root: Path, run_root: Path, baseline: Path | None = None):
@@ -52,12 +87,17 @@ def materialize(target_root: Path, index_root: Path, run_root: Path, baseline: P
             scene_cache[key] = json.loads((source / "catalog" / (key[1] + ".json")).read_text())
         provenance = view_metadata(row, scene_cache[key], store.manifest["canonical_size"], row["rotation_degrees"])
         clean = {key: value for key, value in candidate.items() if key not in {"ref", "rank_scores", "path_ranks", "scale_scores"}}
-        return {**provenance, **clean, "view_id": row["view_id"], "feature_version": store.manifest["feature_version"],
+        return {**provenance, **clean, "view_id": row["view_id"], "base_feature_row": row["source_feature_row"],
+                "item_id": scene_cache[key].get("item_id", row["scene_id"]),
+                "feature_version": store.manifest["feature_version"],
                 "run_id": manifest["run_id"], "slot": result["slot"], "target_id": result["target_id"],
                 "target_pts": result["target_pts"], "rank": rank, "rank_scores_json": json.dumps(candidate.get("rank_scores", {})),
                 "path_ranks_json": json.dumps(candidate.get("path_ranks", {})),
                 "scale_scores_json": json.dumps(candidate["scale_scores"]), "config_hash": manifest["run_id"],
                 "source_recipe_json": json.dumps({"index_member": row["index_member"], "scene_id": row["scene_id"],
+                                                    "source_id": row.get("source_id"), "collection_id": row.get("collection_id"),
+                                                    "item_id": scene_cache[key].get("item_id", row["scene_id"]),
+                                                    "asset_key": row.get("asset_key"), "extraction_version": row.get("extraction_version"),
                                                     "source_window": row["window"], "rotation": row["rotation_degrees"],
                                                     "crop": row["rotation_crop"], "view_version": store.manifest["view_version"],
                                                     "canonical_size": store.manifest["canonical_size"]}),
@@ -81,6 +121,7 @@ def materialize(target_root: Path, index_root: Path, run_root: Path, baseline: P
         path = photo(chosen["ref"])
         row = record(chosen, result, 1)
         row.update({"photo": path.relative_to(run_root).as_posix(), "photo_sha256": checksum(path), "fallback_reason": None})
+        row["selected_rgb_cache_ref"] = row["photo"]
         selected.append(row)
         if slot in evaluation:
             overview.append((target_root / frame["frame"], f"target {frame['target_time']:.3f}s"))
@@ -130,6 +171,10 @@ def materialize(target_root: Path, index_root: Path, run_root: Path, baseline: P
         before = json.loads((baseline / "manifest.json").read_text())
         if before["target_set_id"] != manifest["target_set_id"]:
             raise ValueError("Method comparison targets differ")
+        if before["index_id"] != store.manifest["source_index_id"]:
+            raise ValueError("Method comparison source pools differ")
+        evaluate_baseline(target_root, baseline, run_root, target_rows, selected, manifest["config"]["workers"])
+        manifest["outputs"].append("baseline-shape-evaluation.json")
         filters = "[0:v]split=2[a][b];[a]crop=iw/2:ih:0:0[t];[b]crop=iw/2:ih:iw/2:0[s];[t][1:v][s]hstack=inputs=3[out]"
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(run_root / "comparison.mp4"),
                         "-i", str(baseline / "color.mp4"), "-filter_complex", filters, "-map", "[out]", "-an", "-c:v", "libx264",
@@ -138,5 +183,6 @@ def materialize(target_root: Path, index_root: Path, run_root: Path, baseline: P
         manifest["comparison_panel_order"] = ["original", "100k-mse", "100k-shape-v2"]
         manifest["baseline_run_id"] = before["run_id"]
     manifest["quality_conclusion"] = "shape-first-output; video-recognition-not-assessed"
+    manifest["output_sha256"] = {name: checksum(run_root / name) for name in manifest["outputs"]}
     write_json(run_root / "manifest.json", manifest)
     return manifest

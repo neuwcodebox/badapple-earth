@@ -500,6 +500,8 @@ NAIP on AWS의 데이터 라이선스 표시는 Public Domain with Attribution�
 | STAC + COG 부분 읽기 | 채택. 검색과 픽셀 접근을 분리하고 원본 전체 보관을 피함 | F2, F3, N3 |
 | 수집 특징 + 공유 RGB 분석 캐시 | 채택. 형태 특징 재생성과 네 회전·원색 출력을 무손실 shard에서 공유 | F5, F7, N2, N3 |
 | NumPy 정확 MSE 기준선 | 확정. 단순하고 결과 해석 가능. FAISS/ANN/의미 embedding은 최초 필수 아님 | F6, F9, N6 |
+| PHOG/Rank + 영역/SDF/Chamfer | 채택. 전체 형태 우선 경로와 실제 시인성·광도 선택. 수식과 운영값은 v2.1로 고정 | F6, F9, N1 |
+| 지속 worker + Numba 정확 거리 커널 | 채택. 원격 읽기와 파일 공개는 단일 writer, 수치 처리는 8개 프로세스. 후보·해상도 축소로 속도를 맞추지 않음 | F6, N2, N3 |
 | 불변 shard + SQLite 작업 상태 | 설계 채택. 구체적 파일 naming/배치 크기는 구현 시 결정 | F5, F10, N2 |
 | 6fps 매칭, 24fps hold | 초기값. 높은 fps보다 먼저 단일 장소 매칭 품질을 판단 | F1, F8, F13 |
 | 소규모 기술 검증→단계적 데이터셋 확대 | 확정. 가용 자원 안에서 최대한 넓게 구축하며 1만·10만·100만에서 계측. 작은 표본의 시각적 성공을 확대 조건으로 요구하지 않음 | F9, F13, N3, N6 |
@@ -518,6 +520,7 @@ Python 3.11 이상, uv, FFmpeg/ffprobe, 인터넷 접근, 쓰기 가능한 로�
 | STAC | `pystac-client` |
 | 원격 래스터·변환 | `rasterio`/GDAL, `pyproj` |
 | 배열·이미지 | `numpy`, `Pillow` |
+| 형태·거리 계산 | `scipy`, `numba` — 현재 float32 영상·정확 격자 거리·capped 방향 비교 |
 | 로컬 영상 디코드 | `av`(PyAV), 실제 PTS와 선택 구간 처리 |
 | 컬럼 저장·상태 | `pyarrow`, 표준 라이브러리 `sqlite3` |
 | 설정·공간 연산 | 표준 JSON, `shapely` |
