@@ -2,7 +2,7 @@
 
 Bad Apple!!의 각 프레임과 형태·명암이 닮은 **실제 위성·항공사진 한 장**을 찾아 영상을 재구성하는 로컬 제작 도구다. 그림을 새로 생성하거나 여러 장소를 합성하지 않고, 실제 지구에서 촬영된 장면 자체를 검색한다.
 
-> **현재 상태: 증분 수집·회전 검색·10초 무음 렌더 파이프라인 구현.** uv 환경에서 MP4 목표 프레임 추출, Sentinel-2 수집·중단 재개·명암 특징 저장, 직각 회전을 포함한 MSE 검색과 실제 사진 MP4 출력을 실행할 수 있다. 인덱스를 참조 결합해 확대하고 같은 타깃의 결과를 비교할 수 있다. 실제 수집 규모·산출물·남은 작업은 [PLAN](docs/PLAN.md)에서 관리한다.
+> **현재 상태: 증분 수집·형태 우선 검색·10초 무음 렌더 파이프라인 구현.** PHOG/Rank 검색, 다중 임곗값 영역·SDF·양방향 방향성 Chamfer, 실제 대비와 형태를 우선한 원색 사진 선택을 지원한다. 기존 직각 회전·출처·MSE 기준선도 보존한다. 실제 실행 상태와 산출물은 [PLAN](docs/PLAN.md)에서 관리한다.
 
 ## 주요 기능과 목표
 
@@ -62,7 +62,7 @@ uv run badapple-earth collect --config config/collect.json --output data/index/p
 
 출력의 `manifest.json`에는 실제 수·지역/스케일 분포·제외 사유·관측 자원이, `jobs.sqlite`에는 작업 상태가 있다. `catalog/`는 고정 장면·추출 계획, `shards/`는 완료 데이터, `cache/blocks/`는 아직 처리할 창이 남은 블록이다. 행 수가 목표보다 적거나 자원 한도에 도달하면 부분 결과를 남기고 종료 코드 1을 반환한다. 현재 RAM 상한 2GiB·인덱스 디스크 예산 4GiB·여유 디스크 하한 1GiB는 `config/collect.json`에서 조정한다.
 
-### 5. 목표 프레임·검색·결과 영상
+### 5. 목표 프레임과 MSE 기준선
 
 `config/targets.json`의 38초부터 10초 구간을 6fps로 샘플링한다. PyAV로 실제 PTS가 목표 시각에 가장 가까운 프레임을 고르고, 동률이면 이전 프레임을 사용한다. 현재 입력은 회전 없는 정사각 픽셀 영상이며, 다른 회전·픽셀 비율의 입력은 크롭을 확정한 후 지원을 보강해야 한다.
 
@@ -101,6 +101,22 @@ uv run badapple-earth compare --baseline data/runs/p3-10k-rotations --run data/r
 두 run의 영상이 있으면 `scale-comparison.mp4`도 만든다. 좌측은 원본, 가운데는 기준선, 우측은 확대 결과다.
 
 `--redistribute`는 일부 AOI의 가용 후보가 초기 할당보다 적을 때, 할당을 채운 AOI의 남은 창으로 부족분을 메운다. 같은 지형군을 우선하며 고갈된 AOI는 재배분 대상에서 제외한다. 모든 곳의 여유가 없거나 추가 수집이 진전되지 않으면 실제 부분 결과로 종료한다. 지역별 수량은 manifest에 실제 분포로 남긴다.
+
+### 7. 형태 우선 검색과 같은 구간 비교
+
+기존 후보 풀의 전체 view에 PHOG·Rank-layout 검색과 다중 임곗값 SDF·영역·양방향 방향성 Chamfer를 적용한다. 형태가 거의 같은 후보 사이에서 실제 사진 광도로 선택한다. MSE로 앞단 후보를 제한하지 않으며 원색 사진은 분석용 마스크로 바꾸지 않는다.
+
+```powershell
+$env:OPENBLAS_NUM_THREADS = '1'
+$env:OMP_NUM_THREADS = '1'
+uv run badapple-earth shape-index --index data/index/p4-100k --output data/shape-v2/p4-100k --workers 8
+uv run badapple-earth shape-match --targets data/targets/38s-10s-6fps --index data/shape-v2/p4-100k --output data/runs/p5-shape-v2 --config config/shape-v2.json
+uv run badapple-earth shape-render --targets data/targets/38s-10s-6fps --index data/shape-v2/p4-100k --run data/runs/p5-shape-v2 --baseline data/runs/p4-100k
+```
+
+분석 캐시와 검색 체크포인트는 같은 명령으로 재개한다. 수치 처리는 8개 작업 프로세스이며 원격 읽기·완료 파일 공개는 한 곳에서 관리한다. 최초 분석에는 기존 고해상도 캐시가 없는 원본만 추가 읽고, 이후 검색·선택 사진 출력은 공유 RGB 캐시를 재사용한다.
+
+`method-comparison.mp4`는 왼쪽부터 원본·10만 MSE·10만 형태 검색이다. `report.html`에는 전체 목표의 사진·마스크·SDF·형태/광도/대비 점수와 출처가 있다. `low_visibility`는 비교 영상과 보고서에 표시한다. 설정·분기·저장 비용은 [형태 검색 계약](docs/SHAPE_MATCHING.md)에 둔다.
 
 ## 사용 방법
 

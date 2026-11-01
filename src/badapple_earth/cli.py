@@ -52,6 +52,20 @@ def main() -> int:
     compare_cmd = commands.add_parser("compare", help="Compare fixed-target baseline and expanded search runs")
     compare_cmd.add_argument("--baseline", required=True, type=Path)
     compare_cmd.add_argument("--run", required=True, type=Path)
+    shape_build = commands.add_parser("shape-index", help="Build/resume full-resolution shape analysis and PHOG/rank features")
+    shape_build.add_argument("--index", required=True, type=Path)
+    shape_build.add_argument("--output", required=True, type=Path)
+    shape_build.add_argument("--workers", default=8, type=int)
+    shape_match = commands.add_parser("shape-match", help="Full PHOG/rank retrieval, SDF/Chamfer/region reranking and shape-first selection")
+    shape_match.add_argument("--targets", required=True, type=Path)
+    shape_match.add_argument("--index", required=True, type=Path)
+    shape_match.add_argument("--output", required=True, type=Path)
+    shape_match.add_argument("--config", type=Path, default=Path("config/shape-v2.json"))
+    shape_render = commands.add_parser("shape-render", help="Render real shape-selected photos, diagnostics and optional baseline comparison")
+    shape_render.add_argument("--targets", required=True, type=Path)
+    shape_render.add_argument("--index", required=True, type=Path)
+    shape_render.add_argument("--run", required=True, type=Path)
+    shape_render.add_argument("--baseline", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "probe":
@@ -92,6 +106,18 @@ def main() -> int:
             from .matching.output import render
             render(args.targets, args.run)
             print(f"Rendered color.mp4, gray.mp4, comparison.mp4: {args.run}")
+        elif args.command == "shape-index":
+            from .shape.index import build
+            result = build(args.index, args.output, args.workers)
+            print(f"Shape index: {result['places']} places / {result['view_count']} views")
+        elif args.command == "shape-match":
+            from .shape.search import match
+            result = match(args.targets, args.index, args.output, json.loads(args.config.read_text(encoding="utf-8")))
+            print(f"Shape match: {result['target_count']} targets, {result['low_visibility_count']} low visibility")
+        elif args.command == "shape-render":
+            from .shape.output import materialize
+            result = materialize(args.targets, args.index, args.run, args.baseline)
+            print(f"Shape video: {result['materialized']} frames / {result['selected_unique_tiles']} photos")
         else:
             from .matching.comparison import compare
             result = compare(args.baseline, args.run)

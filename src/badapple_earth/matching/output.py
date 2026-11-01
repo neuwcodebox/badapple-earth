@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -121,6 +121,8 @@ def render(target_root: Path, run_root: Path):
                 pair = Image.new("RGB", (source.width * 2, source.height))
                 pair.paste(target, (0, 0))
                 pair.paste(source, (source.width, 0))
+                if row.get("low_visibility", False):
+                    ImageDraw.Draw(pair).text((source.width + 4, source.height - 14), "LOW VISIBILITY", fill="#ff5050")
                 pair.save(run_root / "frames/comparison" / f"{slot:04d}.png")
     for name in ["color", "gray", "comparison"]:
         encode(run_root / "frames" / name, run_root / f"{name}.mp4", config["sample_fps"],

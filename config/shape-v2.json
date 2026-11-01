@@ -1,0 +1,12 @@
+{
+  "retrieval_k": 2048,
+  "coarse_k": 256,
+  "path_keep": 64,
+  "shape_tolerance": 0.01,
+  "min_contrast": 0.03,
+  "workers": 8,
+  "uniform_energy_max": 0.005,
+  "uniform_variance_max": 0.0025,
+  "query_batch": 16,
+  "vector_batch": 8192
+}
