@@ -36,6 +36,8 @@ def main() -> int:
     match_cmd.add_argument("--index", required=True, type=Path)
     match_cmd.add_argument("--output", required=True, type=Path)
     match_cmd.add_argument("--top-k", type=int, default=20)
+    match_cmd.add_argument("--rotations", default="0,90,180,270", help="Clockwise quarter turns, comma separated; use 0 for baseline")
+    match_cmd.add_argument("--photo-cache", type=Path, help="Optional existing unrotated photo directory")
     materialize_cmd = commands.add_parser("materialize", help="Cache selected real photos and Top-5 comparisons")
     materialize_cmd.add_argument("--targets", required=True, type=Path)
     materialize_cmd.add_argument("--index", required=True, type=Path)
@@ -68,8 +70,9 @@ def main() -> int:
             print(f"{result['count']} targets: {args.output}")
         elif args.command == "match":
             from .matching.search import match
-            result = match(args.targets, args.index, args.output, args.top_k)
-            print(f"{result['target_count']} targets / {result['candidate_count']} candidates: {args.output}")
+            rotations = tuple(int(angle.strip()) for angle in args.rotations.split(","))
+            result = match(args.targets, args.index, args.output, args.top_k, rotations, args.photo_cache)
+            print(f"{result['target_count']} targets / {result['candidate_count']} places / {result['view_count']} views: {args.output}")
         elif args.command == "materialize":
             from .matching.output import materialize
             result = materialize(args.targets, args.index, args.run)

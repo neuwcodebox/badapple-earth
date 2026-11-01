@@ -68,12 +68,16 @@ uv run badapple-earth collect --config config/collect.json --output data/index/p
 
 ```bash
 uv run badapple-earth targets --config config/targets.json --output data/targets/38s-10s-6fps
-uv run badapple-earth match --targets data/targets/38s-10s-6fps --index data/index/p2-10k --output data/runs/p3-10k --top-k 20
-uv run badapple-earth materialize --targets data/targets/38s-10s-6fps --index data/index/p2-10k --run data/runs/p3-10k
-uv run badapple-earth render --targets data/targets/38s-10s-6fps --run data/runs/p3-10k
+uv run badapple-earth match --targets data/targets/38s-10s-6fps --index data/index/p2-10k --output data/runs/p3-10k-rotations --top-k 20
+uv run badapple-earth materialize --targets data/targets/38s-10s-6fps --index data/index/p2-10k --run data/runs/p3-10k-rotations
+uv run badapple-earth render --targets data/targets/38s-10s-6fps --run data/runs/p3-10k-rotations
 ```
 
-`targets`와 `match`의 출력 경로는 새 디렉터리여야 한다. 검색은 고정한 인덱스 스냅샷의 정확한 명암 MSE Top-20이며, 점수가 같으면 타일 ID 순서로 정한다. `materialize`는 기존 표본·블록 캐시를 우선 재사용하고 실제로 필요한 사진만 추가로 읽는다. 실패 시 차순위를 선택하고 이유를 기록한다.
+`targets`와 `match`의 출력 경로는 새 디렉터리여야 한다. 검색은 고정한 인덱스 스냅샷의 정확한 명암 MSE Top-20이다. 기본 `--rotations 0,90,180,270`은 시계 방향의 네 방향을 검색하고, 동률이면 view ID 순서로 정한다. 90/270도는 회전한 사진을 중앙 크롭해 목표 비율을 유지하며 선택한 변환을 실제 영상에도 적용한다. 1만 장소라면 최대 4만 view를 검색하지만 장소 수가 늘어난 것은 아니다.
+
+최초 검색에서 추가 회전 특징을 만든 뒤 재사용한다. 기존 PNG·블록 캐시를 우선 사용하며, 캐시에 없는 기본 사진만 원본에서 읽는다. 예전 0도 결과의 사진이 있으면 `--photo-cache data/runs/p3-10k/photos`로 재사용할 수 있다. 0도 비교 기준선은 `--rotations 0`으로 실행한다. 직각 외 각도는 현재 지원하지 않는다.
+
+`materialize`도 기존 표본·블록·기본 사진 캐시를 재사용하고 실제 선택 사진을 view ID로 보관한다. 실패 시 차순위를 선택하고 이유를 기록한다. 각도·크롭·원래 위치와 최종 화각은 순위/선택 Parquet에 남는다.
 
 결과는 `color.mp4`, `gray.mp4`, `comparison.mp4`, 고정 목표 20개의 `top5.jpg`, 전체 Top-K의 `matches.parquet`, 실제 선택의 `selected.parquet`와 출처 manifest다. 현재 렌더는 24fps 사진 hold와 명시적 무음 모드다. 원본 음원 동기화는 사용권 확인 후 구현할 후속 기능이다. 소규모 결과는 기술적 기준 결과이며 충분히 큰 데이터셋에서의 표현력을 대신 평가하지 않는다.
 

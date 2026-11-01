@@ -30,7 +30,7 @@ def test_mse_ranking_handles_uint8_extremes_and_breaks_ties_by_id(tmp_path):
     (index / "manifest.json").write_text(json.dumps({
         "feature_version": "test", "canonical_size": [256, 191], "coarse_shape": [12, 16],
         "index_id": "index", "shards": [{"shard_id": "one", "rows": 4}]}))
-    result = match(targets, index, output, top_k=10)
+    result = match(targets, index, output, top_k=10, rotations=(0,))
     rows = pq.read_table(output / "matches.parquet").to_pylist()
     assert [row["tile_id"] for row in rows] == ["white-a", "white-b", "middle", "zero"]
     assert rows[0]["raw_mse"] == 0 and rows[-1]["raw_mse"] == 1

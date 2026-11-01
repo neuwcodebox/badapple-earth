@@ -1,23 +1,17 @@
 """Cache required real photos and encode held frames with local FFmpeg."""
 
-from contextlib import ExitStack
 import json
-import math
 from pathlib import Path
-import shutil
 import subprocess
 
 import numpy as np
 from PIL import Image
 import pyarrow as pa
 import pyarrow.parquet as pq
-from rasterio.windows import Window
 
-from ..collection.windows import identity, slices
 from ..evidence import checksum, contact_sheet, write_json
-from ..features import canonical_image
-from ..imagery import SceneReader, check_quality
-from ..sources.sentinel import safe_asset
+from .photos import PhotoCache
+from .views import rotate_image
 
 
 def materialize(target_root: Path, index_root: Path, run_root: Path):
@@ -34,42 +28,13 @@ def materialize(target_root: Path, index_root: Path, run_root: Path):
     (run_root / "photos").mkdir(exist_ok=True)
     failures = []
     selected, comparisons = [], {}
-    cached_job, cached_rgb = None, None
-    with ExitStack() as stack:
-        readers = {}
+    with PhotoCache(index_root, index) as photos:
         def photo(row):
-            nonlocal cached_job, cached_rgb
-            destination = run_root / "photos" / (row["tile_id"] + ".png")
+            destination = run_root / "photos" / (row["view_id"] + ".png")
             if destination.exists():
                 return destination
-            if row["sample_image"]:
-                temporary = destination.with_suffix(".tmp")
-                shutil.copyfile(index_root / row["sample_image"], temporary)
-                temporary.replace(destination)
-                return destination
-            left, top, _, _ = row["window"]
-            size = index["config"]["block_size"]
-            job_id = identity([row["aoi_id"], row["scene_id"], left // size, top // size])
-            cached_path = index_root / "cache/blocks" / (job_id + ".npz")
-            if cached_path.exists():
-                if cached_job != job_id:
-                    with np.load(cached_path, allow_pickle=False) as data:
-                        cached_rgb = data["rgb"]
-                    cached_job = job_id
-                plan_path = index_root / "catalog" / f"{row['aoi_id']}-{row['scene_id']}.json"
-                plans = json.loads(plan_path.read_text(encoding="utf-8"))
-                plan = next(plan for plan in plans if plan["job_id"] == job_id)
-                sy, sx = slices(row["window"], plan["read_window"])
-                rgb = cached_rgb[:, sy, sx]
-            else:
-                if row["scene_id"] not in readers:
-                    scene = json.loads((index_root / "catalog" / (row["scene_id"] + ".json")).read_text(encoding="utf-8"))
-                    readers[row["scene_id"]] = stack.enter_context(SceneReader(safe_asset(scene["visual"]), safe_asset(scene["scl"])))
-                rgb, valid, scl = readers[row["scene_id"]].read_block(Window(*row["window"]))
-                quality = check_quality(valid, scl, index["config"]["max_cloud_ratio"])
-                if quality["reasons"]:
-                    raise ValueError("Selected source window is no longer valid")
-            image = canonical_image(rgb, tuple(index["canonical_size"]))
+            image = rotate_image(photos.base(row), row["rotation_degrees"], index["canonical_size"],
+                                 row.get("rotation_crop"))
             temporary = destination.with_suffix(".tmp")
             image.save(temporary, format="PNG")
             temporary.replace(destination)
@@ -95,7 +60,7 @@ def materialize(target_root: Path, index_root: Path, run_root: Path):
                 paths = []
                 for row in candidates[:5]:
                     try:
-                        paths.append((photo(row), f"rank {row['rank']} MSE {row['raw_mse']:.4f}"))
+                        paths.append((photo(row), f"rank {row['rank']} {row['rotation_degrees']}deg MSE {row['raw_mse']:.4f}"))
                     except (OSError, ValueError) as error:
                         failures.append({"slot": slot, "tile_id": row["tile_id"], "rank": row["rank"],
                                          "stage": "comparison", "error_type": type(error).__name__})
@@ -111,6 +76,9 @@ def materialize(target_root: Path, index_root: Path, run_root: Path):
     run["materialization_failures"] = failures
     run["evaluation_slots"] = sorted(evaluation)
     run["selected_unique_tiles"] = len({row["tile_id"] for row in selected})
+    run["selected_unique_views"] = len({row["view_id"] for row in selected})
+    run["selected_rotation_counts"] = {str(angle): sum(row["rotation_degrees"] == angle for row in selected)
+                                       for angle in sorted({row["rotation_degrees"] for row in selected})}
     years = sorted({row["acquired_at"][:4] for row in selected})
     run["credits"] = [f"Contains modified Copernicus Sentinel data {year}" for year in years]
     run["source_reference"] = "https://registry.opendata.aws/sentinel-2-l2a-cogs/"
