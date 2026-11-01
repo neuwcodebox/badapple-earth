@@ -152,6 +152,7 @@ def build(index_root: Path, root: Path, workers=8):
                             if tile["tile_id"] in excluded:
                                 continue
                             tile["index_member"] = original["index_id"]
+                            tile["quality_policy"] = tile.get("quality_policy") or "rgb-all-band-mask-v1"
                             left, top = tile["window"][:2]
                             job = identity([tile["aoi_id"], tile["scene_id"], left // block_size, top // block_size])
                             groups[(tile["scene_id"], job)].append(tile)

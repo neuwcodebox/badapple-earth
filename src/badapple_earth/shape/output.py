@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import get_context
+from functools import lru_cache
 
 import numpy as np
 from PIL import Image
@@ -30,6 +31,11 @@ def baseline_score(paths):
     if prepared["near_uniform"]:
         return {"D_shape": None, **tone(gray, prepared)}
     return {"D_shape": score(gray, prepared, True)["D_shape"], **tone(gray, prepared)}
+
+
+@lru_cache(maxsize=64)
+def source_rows(source, shard):
+    return pq.read_table(Path(source) / "shards" / shard / "tiles.parquet", use_threads=False).to_pylist()
 
 
 def evaluate_baseline(target_root, baseline, run_root, target_rows, selected, workers):
@@ -86,6 +92,9 @@ def materialize(target_root: Path, index_root: Path, run_root: Path, baseline: P
         if key not in scene_cache:
             scene_cache[key] = json.loads((source / "catalog" / (key[1] + ".json")).read_text())
         provenance = view_metadata(row, scene_cache[key], store.manifest["canonical_size"], row["rotation_degrees"])
+        original = source_rows(str(source), row["source_shard_id"])[row["source_feature_row"]] if row.get("source_shard_id") else row
+        if original["tile_id"] != row["tile_id"]:
+            raise ValueError("Source provenance row mapping differs")
         clean = {key: value for key, value in candidate.items() if key not in {"ref", "rank_scores", "path_ranks", "scale_scores"}}
         return {**provenance, **clean, "view_id": row["view_id"], "base_feature_row": row["source_feature_row"],
                 "item_id": scene_cache[key].get("item_id", row["scene_id"]),
@@ -107,7 +116,7 @@ def materialize(target_root: Path, index_root: Path, run_root: Path, baseline: P
                 "best_visible_D_shape": result["chosen"].get("best_visible_D_shape"),
                 "low_visibility": bool(result["chosen"]["low_visibility"]),
                 "retrieval_truncated": result["retrieval_truncated"], "rerank_truncated": result["rerank_truncated"],
-                "quality_policy": row.get("quality_policy", "rgb-all-band-mask-v1")}
+                "quality_policy": original.get("quality_policy") or "rgb-all-band-mask-v1"}
 
     for slot, frame in enumerate(target_rows):
         result = json.loads((run_root / "scores" / f"{slot:04d}.json").read_text())
@@ -135,7 +144,7 @@ def materialize(target_root: Path, index_root: Path, run_root: Path, baseline: P
             scores = chosen["scale_scores"][0]["levels"]
             position = min(range(len(scores)), key=lambda i: abs(scores[i]["target_level"] - .5))
             first = prepared["geometry"][gray.shape[1]][0][position]["mask"]
-            second = structures(gray, gray.shape[1])[0] <= scores[position]["threshold"]
+            second = structures(gray, gray.shape[1])[0] <= np.float64(scores[position]["threshold"])
         else:
             first, second = prepared["normalized"] <= .5, gray / 255 <= .5
         difference = (sdf(second) - sdf(first)) / 2
