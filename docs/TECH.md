@@ -1,0 +1,564 @@
+# Bad Apple Earth — 기술 설계
+
+이 문서는 구현자가 별도 대화 없이 데이터 접근부터 최종 영상까지 구현할 수 있도록 계약과 초기값을 정리한다. **현재 구현은 없다.** 아래의 파일 구조·설정·수치·처리 절차는 구현 대상이며, 데이터 수집 성능과 시각 품질을 이미 검증했다는 뜻이 아니다. 실제 실행·검증 상태는 [PLAN](PLAN.md)에 둔다.
+
+## 전체 구조
+
+<!-- 구성요소의 책임·소유 상태와 연결·데이터 흐름을 설명한다. -->
+
+```text
+로컬 MP4 ─ 분석·고정 콘텐츠 크롭·시점 추출 ─ 타깃 공통 특징 ─────────┐
+                                                                    │
+AOI/시기/할당량 ─ STAC 장면 검색 ─ 접근/자산 확인                     │
+                    └─ COG 블록 읽기 ─ 다중 스케일 창 추출           │
+                         └─ 품질·중복 검사 ─ 특징 + 출처 저장 ──────┤
+                                                                    ▼
+                                                     배치 Top-K 검색·재정렬
+                                                                    │
+                                            원본 COG 재추출 / 선택 사진 캐시
+                                                                    │
+                                       실제 사진 hold + 선택한 원본 오디오
+                                                                    │
+                                        MP4 / 비교 시트 / manifest / 평가
+```
+
+영상 입력과 지리 이미지 수집은 독립적이다. MP4가 없어도 수집기를 구현·검증할 수 있고, 수집이 멈춰도 완료된 인덱스로 검색할 수 있다. 네트워크가 없어도 캐시가 있는 결과는 재렌더링할 수 있어야 한다.
+
+| 구성요소 | 책임·소유 상태 | 관련 요구 |
+| --- | --- | --- |
+| 입력 처리 | MP4 식별·probe·콘텐츠 크롭·목표 시각과 프레임 | F1, N2, N5 |
+| 소스 adapter | 카탈로그, 자산 해석, 접근·서명·밴드·권리 정보 | F2, F11, F12, N4 |
+| 수집기 | AOI quota, 원격 블록·창, 유효성·중복·작업 상태 | F3, F4, F10, N3 |
+| 공통 특징 처리 | RGB→명암·축소·특징 버전 | F5, F6, N2 |
+| 저장소 | 타일 ID, 불변 인덱스 shard, 선택 이미지, commit 상태 | F5, F7, F10, N2, N3 |
+| 검색기 | 정확한 MSE 기준선, Top-K, 선택적 개선 실험 | F6, F12, N1, N3 |
+| 재추출·렌더 | 소스 재해석, 정확한 창·변환, 시간 배치, 음원 | F7, F8, N1 |
+| 보고·출처 | 비교 샘플·점수·자원·권리·프레임별 provenance | F9, F11, F13, N4, N6 |
+
+STAC·래스터 읽기·인코딩은 검증된 라이브러리를 재사용한다. 프로젝트에서 구현할 부분은 AOI/작업 orchestration, 추출·특징·검색 계약, 출처 연결과 평가다. 처음부터 범용 플러그인 시스템·웹 서버·분산 작업 큐는 필요하지 않다.
+
+## 주요 경계와 계약
+
+<!-- 외부 연동과 모듈 사이에서 유지해야 할 입출력·상태·실패 계약을 설명한다. -->
+
+### 1. 원본 MP4와 시간 축
+
+**관련 요구: F1, F8, F9, N2, N5.**
+
+입력은 사용자가 이미 보유한 로컬 MP4다. 권장 위치는 `input/badapple.mp4`지만 절대경로·상대경로를 모두 받을 수 있게 한다. 경로의 공백·한글을 처리하고 원본을 변경하지 않는다. 외부 다운로드·업로드는 하지 않는다.
+
+최초 확인 항목은 영상/오디오 스트림 선택, duration, time base, start time, nominal/average fps, coded width/height, SAR/DAR, 회전 메타데이터, 디코드 가능 여부다. ffprobe는 이런 메타데이터를 기계 판독 가능한 형태로 출력할 수 있다.[R9]
+
+콘텐츠 크롭은 여러 대표 프레임을 확인해 **전체 선택 구간에 하나의 고정 사각형**으로 저장한다. Bad Apple의 검은 화면과 검은 실루엣은 콘텐츠일 수 있으므로 프레임별 검은 경계 자동 제거를 하지 않는다. 파일이 실제 4:3인지 확인하기 전에는 4:3을 확정하지 않는다.
+
+초기 실험 설정:
+
+| 항목 | 값·결정 방식 |
+| --- | --- |
+| 테스트 길이 | 10초, 실제 영상 범위 안에서 |
+| 구간 시작 | P1에서 다양한 형상·전환이 있는 구간을 선택해 고정. 30초는 과거 예시일 뿐 기본 확정값 아님 |
+| 목표 시각 | `t_i = start + i / sample_fps`, `i = 0 … 59` (10초·6fps 예시) |
+| 매칭 fps | 6 |
+| 출력 fps | 24 기본, 30 선택 |
+| 색상 | 원래 컬러 기본; 흑백은 비교 산출물 |
+| 보간 | 사진 hold만. 기본 모핑·광학흐름·crossfade 없음 |
+
+가변 프레임레이트도 실제 PTS를 기준으로 처리한다. 프레임 번호를 정수 fps로 나눈 값만 믿지 않는다. 구현 시 목표 시각에 가장 가까운 디코드 프레임을 고르는 규칙(동률은 이전 프레임)을 고정하고 목표 시각과 실제 선택 PTS를 함께 저장한다. 부족한 구간을 말없이 연장하거나 검은 프레임으로 채우지 않는다.
+
+10초·6fps를 24fps로 표시하면 각각 4프레임을 hold한다. 일반 조합은 `floor(output_time * sample_fps)`로 목표 슬롯을 정하는 등 시간 기반 규칙을 사용하고 마지막 슬롯 길이를 처리한다. 오디오는 동일한 `start`와 `duration`으로 잘라 타임스탬프를 출력 시작에 정렬한다. 원본의 비영(非零) stream start time도 확인한다. 입력 오디오가 없거나 무음 모드를 요청하면 정상적인 무음 결과로 표시한다.
+
+### 2. 외부 데이터 소스
+
+**관련 요구: F2, F3, F11, F12, N3, N4.**
+
+STAC은 촬영 장면·자산을 찾는 카탈로그이고 COG는 실제 영상 일부를 읽는 형식이다. 카탈로그 주소에서 곧바로 지도 타일을 긁는 것이 아니다. 컬렉션 메타데이터가 있다고 특정 장면의 픽셀 접근까지 검증된 것은 아니다.
+
+#### 2.1 Sentinel-2 Collection 1 L2A — 첫 구현의 유일한 필수 소스
+
+| 항목 | 설정 |
+| --- | --- |
+| 내부 source ID | `earthsearch-sentinel2-c1` |
+| STAC API | `https://earth-search.aws.element84.com/v1` |
+| Collection | `sentinel-2-c1-l2a` |
+| 우선 RGB asset | `visual` |
+| 보조 품질 asset | `scl` |
+| 초기 날짜 범위 | `2023-01-01/2026-10-31`, 재실행 시 명시적으로 고정 |
+| 초기 장면 구름 기준 | `eo:cloud_cover <= 10` (%) |
+| 첫 접근 | 실제 item의 HTTPS COG href를 사용, 익명 읽기를 먼저 확인 |
+
+2026-11-01 확인한 컬렉션 정의는 `visual`을 10m·3밴드·uint8 COG, `scl`을 20m·uint8 COG로 기술한다. 이는 **스키마 확인 결과**다. 실제 파일의 dtype·CRS·band order·mask·블록 크기·transform은 매 장면 읽을 때 확인한다.[R1]
+
+AWS 안내에서 Collection 1 데이터 버킷 `e84-earth-search-sentinel-data`는 AWS 계정 없는 접근 경로를 제공한다.[R3] 임의로 이 버킷의 경로를 조립하지 말고 STAC item의 자산을 따른다. 오래된 `sentinel-2-l2a`와 현재 선택한 C1을 말없이 섞지 않는다. C1이 접근 불가하면 원인과 후보 대체 컬렉션을 기록한 뒤 설정을 바꾼다.
+
+`visual`이 정상 RGB uint8이면 직접 사용한다. 존재하지 않거나 다른 형식이면 이유를 남겨 건너뛰는 것이 초기 기본이다. raw red/green/blue uint16 reflectance를 무조건 uint8로 cast하면 안 된다. 밴드 조합 지원이 필요해지면 radiometric scale/offset·stretch 정책을 명시한 별도 버전으로 구현한다.
+
+#### 2.2 NAIP — 조건부 고해상도 보강
+
+NAIP는 촬영 시기·지역에 따라 대략 0.3~1m급 항공영상으로 세부 도시·농경지 패턴을 보강할 수 있다. **AWS의 `naip-analytic`, `naip-source`, `naip-visualization`은 Requester Pays로 안내된다.** 공개 이용 가능 데이터라고 다운로드 경로까지 무료라고 간주하지 않는다.[R4]
+
+| 경로 | 카탈로그·자산 | 접근 정책 |
+| --- | --- | --- |
+| Earth Search | 같은 API의 collection `naip`, asset `image` | 먼저 메타데이터 확인. 실제 href의 AWS 과금·인증 조건을 점검하고 승인 없이는 유료 읽기 금지 |
+| Microsoft Planetary Computer | `https://planetarycomputer.microsoft.com/api/stac/v1`, collection `naip`, 실제 RGB asset 확인 | 조건부 대체 접근 후보. SDK 서명과 서비스 정책·실제 COG 읽기를 P5에서 확인 |
+
+Earth Search의 NAIP 정의는 `image`를 RGB+NIR의 4밴드 COG로 기술한다. 컬렉션의 촬영기간 정보도 Sentinel-2와 같지 않으므로, Sentinel의 2023년 이후 필터나 `eo:cloud_cover`를 그대로 적용하지 않는다. RGB 밴드만 정확히 고르고 NIR를 가시광 채널로 사용하지 않는다.[R2]
+
+Planetary Computer는 `planetary_computer.sign` 또는 `sign_inplace`를 사용하는 공식 Python SDK 경로를 제공한다. 서명된 URL은 임시 접근에만 쓰고 영구 식별자로 저장하지 않는다. 키가 필수인지·제한이 어떤지는 해당 환경에서 다시 확인한다.[R5] 이 문서 작성 단계에서 그 경로로 실제 NAIP 픽셀을 읽은 것은 아니다.
+
+경로가 바뀌면 source ID도 `planetarycomputer-naip` 등으로 구분한다. 서로 다른 제공자의 동일 지역 영상이 자동으로 동일한 바이트·촬영분이라는 가정은 하지 않는다.
+
+#### 2.3 후순위 소스와 공통 규칙
+
+Landsat Collection 2는 넓은 지형 패턴을 위한 후순위 후보이며, OpenAerialMap은 영상별 이용 조건·품질 검토가 필요하다. 첫 구현에 추가하지 않는다. 상용 지도 서비스 화면 캡처와 타일 스크래핑은 제외한다.
+
+모든 소스 adapter는 collection/item/asset과 접근 방식·밴드·품질 자산·라이선스 링크를 정규화해서 반환한다. `s3://`를 단순 문자열 치환해 HTTPS로 만들지 않는다. 401/403은 인증·과금·서명 만료를 구분하고 429/503만 무제한 반복하지 않는다. 정상 항목이 없으면 명시적 빈 결과와 이유를 반환한다.
+
+`requester_pays`는 기본 `false`, 네트워크 동시 장면 수는 기본 2다. AWS 자격증명이 환경에 있다는 이유만으로 청구 동의를 가정하지 않는다.
+
+### 3. 수집 계획과 대량 전처리
+
+**관련 요구: F2–F5, F10, F12, N2–N4.**
+
+#### 3.1 AOI와 장면 선별
+
+전 세계 단일 BBOX를 무제한 검색하지 않는다. 작은 AOI를 GeoJSON 또는 BBOX 목록으로 관리하고 지형군별 quota를 나눈다. 각 AOI에는 `aoi_id`, `terrain_group`, geometry, enabled, scene/tile quota, 적용 소스를 둔다.
+
+아래는 구현자가 초기 AOI 설정으로 옮길 수 있는 **수집 탐색용 제안 범위**다. 행정경계·촬영 품질·유효 후보 수를 검증한 목록은 아니며 P1에서 실제 장면과 contact sheet를 보고 조정한다. 순서는 `[서경도/최소경도, 남위도/최소위도, 동경도/최대경도, 북위도/최대위도]`, 즉 `[west, south, east, north]`다.
+
+| AOI ID | 지형군 | BBOX |
+| --- | --- | --- |
+| coast-kr | 해안·섬 | `[125.6, 34.5, 126.8, 35.5]` |
+| coast-jp | 해안·섬 | `[132.5, 33.5, 134.3, 34.8]` |
+| desert-na | 사막·건조지 | `[11.5, 23.0, 12.5, 24.0]` |
+| desert-au | 사막·건조지 | `[135.0, -26.0, 136.0, -25.0]` |
+| mountain-himalaya | 산악 | `[85.0, 27.5, 86.2, 28.5]` |
+| mountain-andes | 산악 | `[-71.5, -34.0, -70.3, -33.0]` |
+| river-nile | 강·습지 | `[30.7, 30.2, 31.7, 31.3]` |
+| river-amazon | 강·습지 | `[-60.5, -3.5, -59.5, -2.5]` |
+| agriculture-us | 농경지 | `[-94.5, 41.0, -93.5, 42.0]` |
+| agriculture-eu | 농경지 | `[1.0, 48.0, 2.0, 49.0]` |
+| city-jp | 도시 | `[139.3, 35.3, 140.1, 36.1]` |
+| city-us | 도시 | `[-118.5, 33.7, -117.7, 34.4]` |
+
+첫 1만 후보는 6개 지형군에 가능한 한 균등하게 배정하고, 할당을 못 채운 군은 부족 이유를 남긴다. 제안 시작값은 AOI당 보관 장면 3개, 카탈로그 검사 상한 500 items다. 상한 때문에 일부만 조회했으면 `truncated_by_limit` 등을 기록한다. 최신 촬영 우선은 필수가 아니다.
+
+같은 MGRS 타일/공간을 여러 날 촬영했다고 서로 다른 지형 샘플처럼 집계하지 않는다. 먼저 다른 공간을 배정하고 같은 공간에서는 품질 좋은 촬영분 하나를 고른다. 계절·광선 차이가 실험에 도움이 될 때만 추가 날짜를 선택한다. 선택된 item 목록을 저장하여 API 반환 순서나 최신 영상 추가로 실험이 바뀌지 않게 한다.
+
+장면 BBOX가 AOI와 겹친다는 이유로 전체 장면을 무조건 수집하지 않는다. 기본은 **후보 중심이 AOI 안에 있는지** 검사하고 footprint를 기록한다. 국가 제한처럼 경계 엄수가 필요한 실험은 footprint 전체 포함 규칙으로 별도 설정한다.
+
+#### 3.2 다중 스케일과 종횡비
+
+아래 수치는 목표 콘텐츠가 4:3일 때의 시작값이다.
+
+| 원본 창 | Sentinel-2 10m 기준 지상 범위 | 검색·미리보기 기준 이미지 |
+| --- | --- | --- |
+| 256×192 px | 약 2.56×1.92 km | 256×192 RGB |
+| 512×384 px | 약 5.12×3.84 km | 256×192 RGB |
+| 1024×768 px | 약 10.24×7.68 km | 256×192 RGB |
+
+실제 콘텐츠 비율이 다르면 창과 출력 높이를 같은 비율로 유도한다. 이미지가 16:9라고 4:3으로 늘리지 않는다. NAIP에는 같은 픽셀 창이 훨씬 좁은 지상 범위를 뜻하므로 `source_gsd`, `ground_width_m`, `ground_height_m`를 저장한다.
+
+시작 stride는 각 창 크기의 50%다. 후보가 중복에 치우치면 75~100%를 비교한다. 장면의 공통 픽셀 원점에서 전역 윈도 목록을 결정하고 안정적인 순서로 배정한다. 영상 끝에 창을 억지로 끼워 맞추며 동일 창을 중복 생성하지 않는다.
+
+후보는 한 원본 asset의 연속된 창이어야 한다. 두 장면 또는 서로 다른 날짜를 이어 붙이지 않는다. 포토모자이크나 cloud-free 합성으로 결측 영역을 메우지 않는다.
+
+#### 3.3 COG 블록 읽기
+
+타일마다 파일을 다시 열어 요청하지 않고 장면을 한 번 열어 큰 블록을 읽고 메모리 안에서 여러 창을 만든다. 초기 읽기 블록은 약 2048×2048px이며 실제 `block_shapes`, overview와 메모리 예산에 맞춘다. COG는 작은 창을 요청해도 내부 블록 전체를 읽을 수 있으므로 픽셀 수와 네트워크 바이트가 같다고 가정하면 안 된다.[R6]
+
+기본 설계는 전역 후보 창을 읽기 블록에 하나씩 배정하고, 블록 오른쪽·아래에 최대 창 크기만큼 필요한 halo를 포함하는 방식이다. 다른 방식도 가능하지만 블록 경계 후보 누락과 중복을 테스트해야 한다. 경계 halo·SCL 정렬·float 변환까지 포함한 동시 메모리를 계산한다.
+
+원격 RGB는 장면 전체를 읽지 않는다. 동일한 소스 창을 분할 읽은 결과와 단독 읽은 결과가 같은 canonical 이미지가 되도록 리샘플링 격자를 고정한다. 정확성 검증 전에는 과도한 overview·근사 읽기 최적화를 하지 않는다. SCL은 별도의 지리적 격자에 맞춰 nearest-neighbor로 정렬한다.
+
+초기 운영값은 장면 동시성 2, 재시도 최대 5회, exponential backoff+jitter, 상한 대기 60초다. `Retry-After`가 있으면 따른다. 연결/읽기 타임아웃을 명시하고 실패 범위를 장면·블록·카탈로그로 구분한다. 실제 서비스 제한과 처리 환경에 맞춰 조정하되 과금·서명 문제를 일반 일시 오류처럼 반복하지 않는다.
+
+#### 3.4 품질 필터
+
+필터 결과는 삭제 여부뿐 아니라 유효율·구름율·품질 태그와 사유 코드로 저장한다.
+
+- 소스의 유효 mask, RGB 밴드 구성, dtype, 크기·범위를 확인한다. 어둡다는 이유만으로 NoData라고 판단하지 않는다.
+- 후보 수집의 초기 유효 픽셀 비율은 95% 이상으로 둘 수 있지만 **검색 기본 풀과 최종 출력에는 결측 픽셀이 없는 창을 사용**한다. 완전 유효가 아닌 창은 `partial_valid`로 분리하고 자동 선택하지 않는다. 검은 결측이 실루엣 매칭을 돕지 않게 한다.
+- SCL이 있으면 RGB의 지리 범위로 정렬한다. 기본 오염 클래스는 구름 그림자 3, 구름 8·9, cirrus 10이며 NoData 0·결함 1도 따로 처리한다. 지형 그림자 2, 물 6, 눈/얼음 11을 구름이라고 제거하지 않는다.[R8]
+- 로컬 구름 오염 비율의 시작 상한은 2%다. 실제 영상으로 튜닝하며 장면 구름 10% 필터와 구분한다. 구름 픽셀을 지우거나 덧칠해 사진을 수정하지 않는다.
+- SCL이 없으면 `cloud_quality=unknown`으로 두고 RGB 휴리스틱을 보조로 쓴다. 이 후보를 최종 사용하려면 샘플/선택 결과를 따로 확인한다. 눈·모래·사막을 흰 구름으로 일괄 제거하지 않는다.
+- 저분산·거의 단색 후보는 `uniform_dark/light` 같은 태그로 보존한다. Bad Apple의 단색 프레임에 필요할 수 있다. 단색이어도 NoData인 경우는 제외한다.
+- 동일 tile ID는 정확 중복으로 제거한다. pHash/dHash는 유사 후보 검색용이고, 해시 하나만으로 서로 다른 모든 장소를 제거하지 않는다. 인접 창·유사 특징을 함께 확인하고 대표와 제외 관계를 남긴다.
+
+#### 3.5 좌표·지상 범위
+
+창 표현을 `col_off, row_off, width, height`로 통일한다. 픽셀 경계 기준의 창 중심은 다음 수학적 변환으로 계산한다.
+
+```text
+source_center_xy = affine_transform * (col_off + width/2, row_off + height/2)
+(lon, lat) = source_crs → EPSG:4326 변환 (always_xy=True)
+```
+
+`src.xy(row, col)`는 기본적으로 픽셀 중심을 사용하므로 이미 경계 기준으로 계산한 중심에 다시 0.5px를 더하지 않게 한다.[R7] footprint는 원본 창 모서리를 변환한 폴리곤으로 기록한다. 회전·기울어진 affine도 단순 북향 픽셀로 가정하지 않는다.
+
+위경도 순서는 GeoJSON/변환 입력에서 `(lon, lat)`, 메타데이터 필드는 이름으로 구분한다. 지상 길이는 투영좌표가 미터 단위일 때만 픽셀 크기로 계산하고, 경위도 CRS이면 측지 거리를 사용한다. `0.0001도 = 0.0001m`처럼 단위를 혼동하지 않는다.
+
+### 4. 특징량과 저장소 계약
+
+**관련 요구: F4–F7, F10, F11, N2, N3.**
+
+#### 4.1 공통 특징 파이프라인
+
+RGB→luminance, 고정 리사이즈와 선택적 정규화를 하나의 공통 경로로 구현해 타깃과 후보에 적용한다. 초기 기준선은 **표시된 RGB의 명암을 그대로 축소**한다. RGB/BGR 순서, 명암 계수, gamma 정책, resampler, 크기, dtype과 feature version을 고정한다.
+
+색채를 의미적으로 이해하는 CLIP/LLM embedding은 기본 검색에서 제외한다. 먼저 저해상도 픽셀 배치가 얼마나 닮는지 검증한다. 강제 threshold만 저장하지 않고 원래 연속 명암을 보존한다.
+
+| 표현 | 4:3 예시 | 용도 |
+| --- | --- | --- |
+| coarse gray | 16×12 uint8 | 빠른 전수 검색 |
+| fine gray | 32×24 uint8 | 재정렬·시각 비교 |
+| 구역 통계 | 4×4 평균·밝은 면적 비율 | 큰 형태 분석 |
+| 선택 edge/gradient | 32×24 uint8 또는 명시된 dtype | 경계 기반 실험 |
+| 선택 색채 통계 | 평균 RGB·채도 | 다양성 분석 |
+| 중복 해시 | pHash/dHash | 근접 중복 후보 확인 |
+
+16×12, 32×24는 4:3 예시다. 다른 비율이면 폭을 기준으로 높이를 유도하고 실제 shape를 index manifest에 넣는다. 동일 인덱스 안에서는 shape가 같아야 하며 다르면 별도 인덱스를 만든다.
+
+CLAHE·대비 정규화·이진화는 별도 feature variant다. 원래 명암 기준선과 나란히 비교한다. 프레임/후보마다 서로 다른 규칙을 쓰지 않고, 거의 단색일 때 분모 0·노이즈 증폭을 방지한다. 특징이 좋아져도 실제 컬러 출력이 비슷해 보이는지 평가해야 한다.
+
+#### 4.2 이미지 캐시 정책
+
+기본은 **전체 후보의 특징 + 원본 위치**를 저장하는 하이브리드 캐시다. 모든 후보를 개별 WebP로 저장하지 않는다. 비교용 무작위 100~200장과 각 타깃 Top-5/Top-20을 필요할 때 materialize한다.
+
+최종 사용 사진은 캐시에 반드시 남긴다. 재현성과 검증을 위해 기준 RGB의 무손실 PNG를 권장하고, WebP quality 80~85는 미리보기 파생물로 사용할 수 있다. 손실 압축 파일은 픽셀 동일성 검증의 기준으로 삼지 않는다. 같은 canonical 렌더 경로로 특징 계산과 최종 프레임을 만들어 창·회전·리사이즈 불일치를 막는다.
+
+반복 알고리즘 실험이 많아지면 전체 256×192 썸네일 저장을 옵션으로 추가할 수 있다. 대량 작은 파일이 부담이면 압축 shard/컨테이너 저장을 검토하되, 필요성이 확인되기 전 저장 프레임워크를 늘리지 않는다. 특징만 저장하면 새로운 특징을 계산할 때 원본을 다시 읽어야 한다는 비용을 명시한다.
+
+#### 4.3 예정 데이터 디렉터리
+
+아래는 **구현 후 생성할 구조**이며 현재 ZIP에 데이터나 설정 파일이 들어 있다는 뜻이 아니다. 재현 가능한 공유 설정은 `config/`, 대용량·로컬 데이터는 `data/`로 분리한다.
+
+```text
+config/
+  sources.yaml                    # 소스·asset·접근/과금 정책
+  areas.geojson                   # AOI·지형군·quota
+  default.yaml                    # 시기·스케일·특징·자원·렌더 설정
+input/
+  badapple.mp4                    # 사용자 제공, Git 제외
+src/badapple_earth/                # 구현 시 책임별로 구성
+  sources/                        # 소스별 adapter
+  ...                             # 수집·특징·저장·검색·렌더·보고
+tests/                            # 실제 테스트 작성 시 추가
+data/
+  catalog/
+    scenes.parquet                # 장면과 자산 식별·품질
+    jobs.sqlite                   # 수집 상태·체크포인트·재시도
+    items/                        # 서명 토큰 제거한 STAC snapshot
+  index/<index_id>/
+    manifest.json                 # 공개된 shard 목록·shape·버전·checksum
+    shards/<shard_id>/
+      tiles.parquet               # 해당 shard의 행과 타일 연결
+      gray_coarse.npy
+      gray_fine.npy
+      edge.npy                    # 옵션
+    staging/                      # 미완료 배치, 검색에서 무시
+    faiss.index                   # 필요할 때만 추가
+  targets/<target_set_id>/
+    frames/
+    targets.parquet
+    features.npz
+    input_probe.json
+  cache/selected/
+  runs/<run_id>/
+    matches.parquet
+    preview.mp4
+    compare/
+    manifest.json
+    stats.json
+    evaluation.md
+```
+
+디렉터리 표기의 `tests/`, `data/`는 루트 아래이며 특정 프레임워크에 강제 결합하지 않는다. `data/config/`와 루트 `config/`를 중복 운영하지 않는다.
+
+#### 4.4 메타데이터 최소 필드
+
+| 레코드 | 필요한 내용 |
+| --- | --- |
+| scene | `scene_id, source_id, stac_endpoint, collection_id, item_id, asset_key, unsigned_locator, acquired_at, footprint, crs, affine, width, height, dtype, bands, nominal_gsd, cloud_cover, aoi_ids, license_refs, retrieved_at, source_etag/version(가능할 때)` |
+| tile | `tile_id, scene_id, shard_id, feature_row, col_off, row_off, width, height, latitude, longitude, footprint, source_gsd, ground_width_m, ground_height_m, valid_ratio, local_cloud_ratio, quality_flags, variance, duplicate_hash, extraction_version` |
+| view | `view_id, tile_id, rotation_degrees, crop/transform_recipe, output_shape, feature_version` |
+| target | `target_id, target_set_id, target_time, selected_source_pts, crop, frame_checksum, feature_shape/version` |
+| match | `run_id, target_id, rank, tile_id, view_id, raw_scores, normalized_scores(사용할 때), penalty, final_score, materialization_status, selected, fallback_reason` |
+| job | `job_id, source/scene/aoi/config identity, state, checkpoint, attempt_count, lease/heartbeat, next_retry, error_category, error_message_redacted` |
+
+`tile_id`는 소스 namespace·collection·item·asset·원본 창·추출 버전의 canonical serialization 해시다. 같은 공간 원본의 회전/크롭 variant는 `view_id`, 다른 특징 알고리즘은 `feature_version/index_id`로 구분한다. 정확한 ID 직렬화 규칙을 테스트한다. 완료 순서나 임의 Python `hash()`를 영구 ID로 사용하지 않는다.
+
+`feature_row`는 전체 데이터셋의 가변 행 번호가 아니라 **`shard_id` 내부 행 번호**다. 타일 메타데이터와 특징 배열을 함께 commit한다. 통합 인덱스를 만들면 통합 행→view ID 매핑과 index ID를 함께 저장한다.
+
+`acquired_at`은 촬영 시각, `retrieved_at`은 수집 시각이다. 촬영 시각이 범위 또는 누락이면 그대로 표현한다. 임의 날짜나 국가명을 만들어 채우지 않는다. STAC snapshot에서도 서명 URL의 query token을 지우고 public locator와 resolver 정보를 남긴다.
+
+#### 4.5 원자적 저장·중단 재개
+
+크기가 계속 변하는 하나의 `.npy`에 임의 append하지 않는다. 작은 불변 shard를 staging에 만들고 다음 순서로 공개한다.
+
+```text
+배치 처리 → tiles와 feature 배열 저장 → 행 수·ID·shape·checksum 검증
+→ 같은 파일시스템의 최종 shard 위치로 atomic rename
+→ shard manifest를 원자적으로 교체 → job checkpoint 갱신
+```
+
+파일과 SQLite를 하나의 DB 트랜잭션이라고 가정하지 않는다. crash가 발생하면 미공개 staging은 무시/정리하고, 공개 shard와 job checkpoint의 차이를 재조정하여 이미 commit한 tile ID를 중복 추가하지 않는다. 가능하면 단일 writer가 manifest를 갱신한다.
+
+작업 상태는 `PENDING / RUNNING / DONE / FAILED`를 사용하고, quota에 의한 중단은 `DONE`이 아니라 체크포인트가 있는 재개 가능 상태로 남긴다. stale RUNNING은 lease/heartbeat로 회수한다. 영구 실패와 재시도 가능한 오류를 분리한다. 완료 판단에 파일 존재 여부만 쓰지 않고 manifest 정합성을 본다.
+
+#### 4.6 용량·메모리 계획
+
+다음은 **4:3, WebP 평균 30KB/장이라는 가정**의 계획치다. 다운로드 트래픽·원본 COG·metadata·edge·인덱스·selected PNG·파일시스템 overhead는 제외되어 있다. 1만 장에서 실제 크기를 측정한다.
+
+| 후보 수 | 전체 WebP 가정 | coarse gray 192B | coarse+fine 960B |
+| ---: | ---: | ---: | ---: |
+| 10,000 | 0.3GB | 1.92MB | 9.6MB |
+| 100,000 | 3GB | 19.2MB | 96MB |
+| 1,000,000 | 30GB | 192MB | 960MB |
+| 5,000,000 | 150GB | 960MB | 4.8GB |
+
+위 단위는 십진수 GB/MB다. 500만은 용량 비교일 뿐 합의한 수집 목표가 아니다. 32×24 uint8 edge를 추가하면 100만 후보에서 768MB가 더 든다. coarse를 float32 FAISS에 넣으면 벡터만 768MB/100만 후보이므로 uint8 파일 크기를 전체 RAM 비용으로 오인하지 않는다.
+
+기본은 coarse/fine을 memory-map 또는 shard 배치로 읽고 변환된 float 배열은 배치만 유지한다. 캐시·SCL·COG halo·검색 점수·원본 디코드 버퍼까지 합친 최고 메모리를 측정한다. 데이터 수집량·RSS·디스크 상한은 환경 확인 후 설정하며, 모르는 다운로드 바이트를 픽셀 수에서 환산해 실측이라고 보고하지 않는다.
+
+### 5. 검색과 재정렬
+
+**관련 요구: F5, F6, F9, F12, N1–N3, N6.**
+
+#### 5.1 MSE 기준선
+
+저해상도 타깃 `T`와 후보 `C`를 같은 shape의 `[0,1]` float32 벡터로 변환하고 다음을 계산한다.
+
+```text
+D_gray(T, C) = mean((T - C)^2)
+```
+
+uint8에서 직접 뺄셈·제곱하지 않는다. overflow/underflow로 순서가 틀어질 수 있다. uniform 타깃도 같은 기준선으로 검색하고 저분산 정상 사진을 후보에서 없애지 않는다. 동률은 `view_id` 오름차순 등 명시적 규칙으로 결정한다.
+
+첫 60개 타깃은 벡터화 NumPy 전수 검색이면 충분히 시험할 수 있다. 후보를 예를 들어 8192행씩 처리하고 각 타깃의 top 100~500을 누적 유지한다. 60×8192 float32 점수 행렬은 약 1.97MB이지만 `targets × candidates × dimension` 방송 연산의 거대한 임시 배열은 피한다. 제곱합·행렬곱으로 L2 거리를 계산하거나 다른 메모리 제한 방식을 사용한다.
+
+1차 후보 중 32×24 명암·큰 형태 통계·edge·SSIM으로 재정렬하는 것은 이후 개선이다. 최종 보관 Top-K는 기본 20, 보고서에는 Top-5를 사용한다. 후보가 K보다 적으면 실제 수만 반환한다. 모든 점수는 metric 이름·버전·범위와 함께 남긴다.
+
+#### 5.2 인덱스와 스트리밍 선택
+
+하나의 짧은 구간만 만들 때는 수집 중 타깃과 즉시 비교해 Top-K를 갱신할 수 있다. 그래도 기본 요구인 **후보 특징과 출처 저장**은 유지해 다른 구간·알고리즘에서 재사용한다. Top-K만 남기고 전체 특징을 폐기하는 모드는 사용 목적이 명확할 때 별도 선택한다.
+
+FAISS는 초기 필수 의존성이 아니다. 반복 검색이 병목으로 확인되면 `IndexFlatL2` 같은 정확 검색을 먼저 사용한다. ANN/PQ는 근사 오차를 평가할 자료와 성능 필요가 있을 때만 검토한다. FAISS의 squared L2 합과 MSE 평균은 차원수만큼 다르므로 보고 점수를 같은 단위로 맞춘다.
+
+수백만 후보·전곡에서는 타깃도 배치로 나누고 전체 거리 행렬을 저장하지 않는다. 실험 중 index build/version과 타깃 집합을 고정한다. GPU를 필수로 만들지 않는다.
+
+#### 5.3 점수 조합과 반복 제어
+
+초기 기준선은 MSE 단독이다. 예전 기획의 `0.55 gray + 0.25 edge + 0.20 shape + reuse_penalty`는 가능한 **튜닝 예시**일 뿐 검증된 기본 가중치가 아니다. 각 거리의 분포를 보정한 뒤 평가해야 하며 후보군마다 임의 min/max로 정규화하면 데이터셋 확장 비교가 흔들릴 수 있다. 보정 규칙/기준 샘플도 고정한다.
+
+동일/가까운 장소의 반복이 결과를 해칠 때만 soft penalty를 추가한다. 상위 후보를 이유 없이 무작위로 고르거나 최근 N프레임 재사용을 무조건 금지하지 않는다. 원본 변화가 작으면 같은 사진을 유지하는 것이 더 나을 수 있다. 페널티 전후의 raw 유사도와 선택 이유를 보관한다.
+
+영상으로 봤을 때 변화가 너무 약한지, 매칭보다 다양성에 끌려가는지를 평가한다. 지리 이동의 자연스러움이나 대륙별 서사는 필수 요구가 아니다.
+
+#### 5.4 회전·기타 변환
+
+기본은 0도다. 180도는 같은 종횡비로 처리할 수 있지만 90/270도는 가로·세로가 바뀐다. **16×12 배열을 회전한 12×16 배열을 그대로 flatten해 같은 의미의 192차원 벡터라고 비교하면 안 된다.**
+
+90/270도 옵션을 도입할 때는 원본에서 세로형 창을 추출해 회전 후 목표 비율이 되게 하거나, 회전된 큰 창을 고정된 규칙으로 재크롭한다. 실제 출력과 검색에 **동일한 window→rotation→crop→resize recipe**를 적용한다. 원래 창과 최종 footprint를 모두 기록한다. 가로세로를 강제로 늘려 맞추지 않는다.
+
+명암 반전·강한 대비 변경은 별도 실험만 허용하며 기본 컬러 결과에 섞지 않는다. 반전 특징으로 검색한 후 원본 컬러를 그대로 내보내면 매칭 의미가 반대가 되므로, 그런 실험은 변환된 출력임을 명시하고 기준선과 별도로 비교한다. 실루엣 합성·픽셀 덧칠은 허용하지 않는다.
+
+### 6. 선택 사진 재추출과 렌더 경계
+
+**관련 요구: F7, F8, F11, N1, N2, N4.**
+
+선택한 후보는 `source_id + collection + item + asset`으로 다시 찾는다. 필요 시 접근 URL을 새로 서명한다. 저장한 소스 버전·메타데이터가 달라졌으면 동일 영상이라고 가정하지 말고 drift를 기록한다. 원본이 달라진 후보는 재검증·재색인 또는 다른 후보 선택이 필요하다.
+
+동일 소스 창·방향·화각·픽셀 전처리로 사진을 만든 후 특징이 인덱스와 일치하는지 검사한다. 기준 이미지를 다시 읽어도 미세한 라이브러리/overview 차이가 있을 수 있으므로 checksum 동일성과 수치 허용오차 조건을 구분한다. 선택된 캐시와 transform recipe를 기준으로 이후 렌더를 재현한다.
+
+재추출 실패는 재시도 후 차순위 후보를 사용할 수 있으나, `fallback_reason`, 원래 순위와 실제 선택 순위를 남긴다. 후보가 모두 실패하면 해당 run은 실패/미완성이다. 임시 검은 화면·원본 프레임·생성 이미지로 채우지 않는다.
+
+최초 결과는 canonical 256×192(4:3 예시) 사진으로도 가능하다. 보기 쉽게 업스케일할 수 있지만 새 디테일이 생겼다고 주장하지 않는다. 고해상도 최종 재추출은 같은 지상 창을 더 큰 출력으로 읽는 것이며 임의로 다른 지형을 잘라 대체하지 않는다.
+
+MP4는 일반 재생 호환성을 고려한 H.264/yuv420p 계열을 우선 검토하되 실제 FFmpeg build의 encoder 지원을 확인한다. 픽셀 크기를 짝수로 맞출 필요가 있을 때 콘텐츠를 왜곡하지 않는 방식으로 처리한다. 원본과 비교하는 split-screen은 검증 산출물이며 기본 작품 프레임의 “단일 장소”와 혼동하지 않는다.
+
+좌표·촬영 연도·소스 오버레이는 선택이다. 초당 6번 바뀌는 지역명이 읽히지 않으면 본편은 사진만 보여주고 별도 manifest/비교 시트에서 정보를 제공한다. 좌표만으로 충분하며 역지오코딩 API는 기본 필수가 아니다. 지도·누적 위치 시각화는 후순위 옵션이고 허구의 지명을 생성하지 않는다.
+
+### 7. 보고서와 품질 의사결정
+
+**관련 요구: F9, F12, F13, N3, N6.**
+
+기본 보고 자료는 다음을 묶는다.
+
+| 산출물 | 필요한 내용 |
+| --- | --- |
+| contact sheet | 시드가 고정된 무작위 후보 100~200개, 지형군·좌표·품질 태그. 보기 좋은 후보만 뽑지 않음 |
+| Top-5 비교 | 고정 타깃 20개 × 실제 후보 5개, 원본/후보 명암과 점수·위치 |
+| 영상 비교 | 같은 구간·같은 시간축의 원본/컬러 결과, 흑백 비교 선택 |
+| 통계 | 장면·유효 후보·중복·지역/지형군/스케일/소스 분포·오류·자원 |
+| 평가 | 잘 보이는 구간·실패 구간·시각 확인 여부·다음 실험의 근거 |
+
+타깃 20개는 단순/복잡/단색/전환을 포함하도록 시간 구간에서 결정적으로 고른다. 개선 기법을 튜닝할 타깃과 고정 비교용 타깃을 구분하면 과적합을 줄일 수 있다. 타깃 목록과 재생 구간을 수집 규모마다 바꾸지 않는다.
+
+1만·10만·조건부 100만 후보에서 raw best MSE의 평균/중앙값/상위 분위, 선택 타일 반복률, 지형 다양성, 처리 시간과 공간을 비교한다. 정확 검색에서 후보 집합이 단순히 늘고 metric이 같다면 best raw MSE는 나빠지지 않아야 한다. 달라졌다면 필터·정규화·index 변경 또는 오류를 점검한다. 다양성 페널티를 포함한 점수는 별도 지표다.
+
+MSE 개선에 임의의 절대 “작품 성공” 기준을 붙이지 않는다. 원본 움직임 인식, 실제 사진으로 보이는지, 재미/질감은 재생해서 판단한다. 시각 확인 도구가 없으면 `visual_review=not_performed`로 남기고 자료를 만든다. 리포트나 체크리스트를 만들었다는 사실만으로 검토가 끝났다고 표시하지 않는다.
+
+매칭이 나쁠 때의 순서는 원본·사진 추출/마스크 확인 → 공통 명암 처리 확인 → 지상 스케일 변경 → 부족한 지형 추가 → 조건부 NAIP → 근거 있는 재정렬/회전이다. 데이터가 늘어도 개선이 미미하면 수집을 중단하고 한 장의 실제 사진으로 표현하는 제약을 평가한다. 기본 콘셉트의 실패를 모자이크 성공으로 바꿔 보고하지 않는다.
+
+### 8. 운영 한도와 오류 계약
+
+**관련 요구: F2, F3, F10, F13, N3–N6.**
+
+필수 설정은 총 후보 수, 장면 수/AOI, 검색 item 상한, 동시성, retry/timeouts, RAM·디스크 한도와 사용 가능 공간 하한이다. 구체적인 머신 성능은 P1에서 확인한다. 첫 실데이터 연결은 100~500 후보, 본 수집은 1만 후보로 제한한다. 그 이상은 [PLAN](PLAN.md)의 근거를 남긴 뒤 진행한다.
+
+비용이 생기는 endpoint·새로운 클라우드 리소스는 자동으로 선택하지 않는다. 카탈로그 무료와 전송비 무료를 분리한다. STAC/COG 인증 토큰은 요청 시점 메모리에서만 다루고, 예외 메시지·GDAL debug log·원본 item JSON에도 남지 않도록 마스킹한다.
+
+| 상황 | 필수 동작 |
+| --- | --- |
+| MP4 없음 | 입력 의존 단계만 차단, 입력 경로 안내. 독립 구현/수집은 가능 |
+| item/asset 없음 | 원인별 skip, 실제 처리 가능한 후보 수 보고 |
+| 401/403 | 서명 만료·접근권·Requester Pays 여부 구분. 무단 자격증명/과금 활성화 금지 |
+| 429/일시 5xx | 제한된 backoff, 요청 감속, 실패 시 checkpoint 보존 |
+| SCL 없음 | 품질 불확실 표시, 휴리스틱·선택 후보 검토, 무조건 clear로 표시 금지 |
+| 디스크/RAM 한도 | 새 배치 시작 전 중단, 완료 shard 보존 |
+| 중단 신호/프로세스 실패 | staging과 공개 데이터 구분, 다음 실행에서 복구 |
+| 특징 shape/버전 불일치 | 검색 중단, 필요한 index 재생성 범위 명시 |
+| 재추출 실패 | 기록된 Top-K 대체 또는 run 실패, 가짜 프레임 생성 금지 |
+| 시각 평가 불가능 | 수치·비교 산출물 제공, 시각 평가는 미실시 표시 |
+
+네트워크 요청 수·바이트는 수집할 수 있는 범위만 기록한다. GDAL 내부 요청 수를 계측하지 못했다면 `unmeasured`로 표시하고 실제 읽은 픽셀 수와 혼동하지 않는다. CPU/RSS/디스크·장면 처리시간·오류율은 관측 가능한 지표로 시작한다.
+
+### 9. 결과 manifest와 CLI 계약
+
+**관련 요구: F1, F5–F11, N2, N4, N5.**
+
+manifest에는 run ID, 입력 MP4 checksum과 stream 정보, 목표 구간·시각·크롭, 코드/의존성/설정 버전, 시드, source/catalog snapshot 식별, index ID, 후보 규모, metric/점수 정책, 이미지 변환, 실제 선택 목록, 캐시 checksum, 오디오/권리 상태, 결과 파일 목록을 담는다.
+
+영상 공개용 manifest는 사용자 절대경로·계정·서명 토큰을 제거한 별도 export로 만든다. 원격 href 자체가 영구 식별자가 아닐 수 있으므로 collection/item/asset을 반드시 유지한다. 원본 촬영 연도를 제작 연도로 대체하지 않는다.
+
+CLI는 다음 책임 경계를 제공하도록 설계하되 이름·플래그는 구현자가 정하고 실제 검증 후 README에 적는다. **아래는 이미 설치된 명령 목록이 아니다.**
+
+| 동작 계약 | 주요 입력 | 주요 출력 |
+| --- | --- | --- |
+| 입력 분석·targets | 로컬 MP4, start, duration, sample fps, crop | probe, 타깃 프레임·시각·특징 |
+| discover | 소스, AOI, 날짜·품질·검색 한도 | 선택 장면 catalog |
+| collect | catalog, 다중 스케일, quota, 자원 상한, resume | 품질 검사된 index shard·작업 상태 |
+| match | target/index ID, metric, top K, 실험 설정 | 후보 순위·점수·선택 목록 |
+| materialize | matches, source resolver, fallback 정책 | 실제 사진 캐시·재추출 증거 |
+| render | 선택 캐시, 출력 fps/크기, 컬러/흑백, 오디오 정책 | MP4와 프레임 매핑 |
+| report | 고정 평가 프레임, index/run ID | contact sheet·Top-5·통계·평가 자료 |
+
+각 단계는 선행 산출물과 설정을 검증하고, 성공 시 생성한 실제 경로를 반환한다. `--help`만 있는 stub이나 빈 MP4를 전체 구현 성공으로 처리하지 않는다. 사용자가 CLI 표면보다 핵심 알고리즘을 요구하면 내부 API와 최소 명령만 먼저 완성해도 되지만 단계별 재실행 가능성은 유지한다.
+
+### 10. 출처·권리·비용 경계
+
+**관련 요구: F2, F8, F11, F12, F13, N4.**
+
+Copernicus Sentinel 데이터는 재사용·수정·배포가 허용되는 조건과 출처 표시 의무가 있다. 가공한 데이터를 공개할 때는 `Contains modified Copernicus Sentinel data [Year]` 형식의 고지를 사용하며, 실제 사용 자료의 연도를 채운다. 정확한 적용 조건은 공식 고지문을 따른다.[R10]
+
+NAIP on AWS의 데이터 라이선스 표시는 Public Domain with Attribution이지만, AWS 원본 접근은 Requester Pays로 안내된다.[R4] 데이터 권리·호스팅 비용·카탈로그 운영 제한은 독립적으로 검토한다. 소스별 고지와 접속일을 실제 사용 기록으로 생성한다.
+
+사용자가 MP4를 가지고 있다는 사실로 원본 영상·음원의 공개 이용 권한을 추정하지 않는다. 공개 여부를 자동 결정하거나 플랫폼에 업로드하지 않는다. 무음 결과도 원본 영상 관련 권리 검토를 대체하지 않는다.
+
+개발 템플릿과 이 프로젝트 코드의 라이선스는 영상 데이터 라이선스와 별개다. 확인한 템플릿 트리에는 LICENSE 파일이 없으므로 MIT 등으로 임의 지정하지 않는다. 템플릿 출처·커밋은 [구성 이력](history/2026-11-01-workspace.md)에 보존한다.
+
+## 기술 선택과 중요한 결정
+
+<!-- 바꾸기 어려운 선택의 이유·대안·제약과 관련 요구사항을 기록한다. -->
+
+| 선택 | 상태·이유와 대안 | 관련 요구 |
+| --- | --- | --- |
+| 한 프레임 = 한 장소 | 확정. 작품의 핵심. 모자이크는 별도 합의 없는 대체안 아님 | F7, F8, N1 |
+| 컬러 기본, 흑백 비교 | 확정. 실제 사진성을 유지하면서 형태 검증도 제공 | F8, F9, N1 |
+| Sentinel-2 우선 | 확정. 전 세계 다양한 공간 패턴을 하나의 소스로 검증. NAIP는 조건부 | F2, F12, N4 |
+| STAC + COG 부분 읽기 | 채택. 검색과 픽셀 접근을 분리하고 원본 전체 보관을 피함 | F2, F3, N3 |
+| 특징 중심 + 선택 사진 캐시 | 채택. 재사용·용량 균형. 전체 thumbnail 캐시는 옵션 | F5, F7, N2, N3 |
+| NumPy 정확 MSE 기준선 | 확정. 단순하고 결과 해석 가능. FAISS/ANN/의미 embedding은 최초 필수 아님 | F6, F9, N6 |
+| 불변 shard + SQLite 작업 상태 | 설계 채택. 구체적 파일 naming/배치 크기는 구현 시 결정 | F5, F10, N2 |
+| 6fps 매칭, 24fps hold | 초기값. 높은 fps보다 먼저 단일 장소 매칭 품질을 판단 | F1, F8, F13 |
+| 1만→평가→10만→조건부 100만 | 확정한 진행 원칙. 품질 개선 없이 무작정 확대하지 않음 | F9, F13, N3, N6 |
+| 기본 로컬 CLI·CPU | 채택. GUI/상시 서버/GPU/LLM 도입은 근거가 있을 때만 | N3, N5, N7 |
+
+블록 크기·시드·구름율·stride·가중치는 설계 초기값이지 사용자 요구를 바꿀 수 없는 상수는 아니다. 실제 측정에 따라 바꿀 때 설정 버전과 비교 근거를 남긴다. 단일 장소·실제 사진·출처 추적 같은 목표 제약은 튜닝 파라미터와 다르다.
+
+## 실행 환경
+
+<!-- 지원 플랫폼과 런타임, 의존성 및 실행 조건을 설명한다. -->
+
+Python 3.11 이상, FFmpeg/ffprobe, 인터넷 접근, 쓰기 가능한 로컬 데이터 디스크를 전제로 한다. Linux/WSL2를 우선 구현 기준으로 한다. Windows 네이티브는 Rasterio/GDAL 등 실제 설치를 확인한 뒤 지원 여부를 표시한다. GPU·고정 VRAM 사양·클라우드 계정은 필수가 아니다.
+
+| 용도 | 우선 후보 |
+| --- | --- |
+| STAC | `pystac-client` |
+| 원격 래스터·변환 | `rasterio`/GDAL, `pyproj` |
+| 배열·이미지 | `numpy`, `Pillow` |
+| 컬럼 저장·상태 | `pyarrow`, 표준 라이브러리 `sqlite3` |
+| 설정 | YAML parser와 GeoJSON 처리. 공간 연산이 복잡해지면 `shapely` 검토 |
+| 테스트·코드 검사 | `pytest`, 필요 시 `ruff` |
+| 선택 기능 | `planetary-computer`, `faiss-cpu`, `opencv-python-headless` 또는 동등한 경계 연산, SSIM 구현 |
+
+불필요한 선택 의존성을 기본 설치에 모두 넣지 않는다. 실제 환경에서 호환성을 확인한 버전으로 lockfile을 생성하고 Git 추적한다. `pip` 또는 `uv` 등 환경 도구는 구현자가 한 경로를 선택해 검증한다. 컨테이너와 CI는 필요가 생겼을 때만 추가한다.
+
+초기 예산은 P1 연결용 100~500 후보와 P2 1만 후보다. 구체적인 RAM/디스크 예산은 사용자 머신을 확인하여 정한다. 임의로 고성능 GPU나 수백 GB 여유 공간이 있다고 가정하지 않는다.
+
+## 배포
+
+<!-- 설치·설정·배포·이전과 복구 과정을 설명한다. -->
+
+최초 배포는 소스와 설정·문서를 로컬에서 실행하는 방식이다. 현재 ZIP에는 하네스 문서만 있고 실행 패키지는 없다. P1에서 최소 패키지 구조와 의존성 관리가 실제로 생긴 뒤 README에 검증된 설치·명령을 추가한다.
+
+입력 MP4, catalog/index, 선택 사진 캐시, run manifest와 공유 설정을 구분한다. 작업 이동 시 큰 원격 원본 전체가 아니라 **완료 index·catalog·필수 선택 캐시·manifest·설정**을 옮긴다. 비밀값은 별도로 전달하며 결과 ZIP에 포함하지 않는다. 입력 MP4는 사용자가 지정한 경로로 별도 제공한다.
+
+인덱스 손상은 manifest/행 매핑 검증으로 감지하고 손상된 shard만 가능한 범위에서 재생성한다. 캐시가 손상되면 원본 재추출 또는 기록된 Top-K 대체를 사용한다. 원격 영상이 사라졌다면 해당 증거와 로컬 보관 상태를 명시한다.
+
+## 유지보수
+
+<!-- 업데이트·호환성 및 외부 의존성 변경에 대응하는 방식을 설명한다. -->
+
+collection/asset 변경에 대응하도록 소스 설정과 resolver를 분리하되 필요 이상의 추상화는 하지 않는다. 소스별 실제 band·dtype·CRS 계약을 확인하고, provider 변경은 새로운 source namespace로 기록한다.
+
+feature/schema/extraction 버전이 달라지면 기존 인덱스와 호환 가능한지 명시한다. 실제 사용 데이터가 없는데 미래 호환 코드를 미리 복잡하게 만들지 않는다. 원격 최신 검색 결과와 기존 고정 catalog를 구분한다.
+
+문서 역할은 [AGENTS](../AGENTS.md)를 따른다. 기능·사용 계약 변경만 SPEC/README에 반영하고, 버그 수정 경위는 중요한 경우 history에 남긴다. 과거 원문은 byte 보존용으로 유지하며 중복 갱신하지 않는다.
+
+## 검증 접근
+
+<!-- 수용 기준 중 검증할 계약·위험과 필요한 환경을 설명한다. -->
+
+### 빠른 오프라인 검증
+
+- **관련 요구:** F1, F3–F8, F10, F11, N1–N3, N5, N7.
+- **확인 방법:** 합성/최소 fixture로 창 좌표·affine 중심·CRS 순서·90도 비율·타깃/후보 특징 일치·uint8 overflow 방지·MSE Top-K·동률·빈 후보·시간 배치·원자적 저장/crash 복구·토큰 제거를 테스트한다.
+- **필요 환경:** 네트워크 없는 로컬 Python. FFmpeg를 쓰는 통합 검증은 별도 표기한다. 합성 fixture는 단위 테스트 용도이며 실제 결과로 보고하지 않는다.
+
+### 실제 외부 데이터 검증
+
+- **관련 요구:** F2–F5, F7, F10, F11, F12, N2–N4, N6.
+- **확인 방법:** 2~3개 서로 다른 AOI의 실제 STAC item·COG 창을 읽고 mask·SCL 정렬·좌표·재추출을 확인한다. source access와 소량 이미지 증거를 보존한다. NAIP는 조건부 별도 실행한다.
+- **필요 환경:** 인터넷과 소스 접근 가능 환경. 비용을 발생시키지 않는지 확인하고 작은 quota를 사용한다. 실패/차단을 단위 테스트 성공으로 대신하지 않는다.
+
+### 실제 입력·영상 검증
+
+- **관련 요구:** F1, F6–F9, F11, F13, N1, N2, N6.
+- **확인 방법:** 사용자 MP4를 분석해 목표 60개를 만들고 실제 선택 사진으로 10초 MP4를 출력한다. 프레임 수·duration·PTS·audio sync·출처를 확인하고 실제 재생으로 원본 인식성을 평가한다.
+- **필요 환경:** 제공된 MP4, FFmpeg, 선택 이미지 캐시, 사람이거나 실제 영상 확인이 가능한 검토 환경. 확인하지 않은 감각적 평가를 추정해 작성하지 않는다.
+
+### 규모 확대 검증
+
+- **관련 요구:** F3, F5, F6, F9, F10, F12, F13, N2–N4.
+- **확인 방법:** 고정 타깃과 누적 후보 집합에서 1만/10만 점수·재생·메모리·저장·네트워크 계측을 비교한다. 품질과 비용을 근거로 100만을 진행하거나 보류한다.
+- **필요 환경:** 실제 머신 상한·완료 인덱스. 코드를 실행하지 않은 시간·용량은 계획치로 표시한다.
+
+미해결 기술 가정은 [PLAN](PLAN.md)의 P1(환경/접근/입력), P3(표현력), P4(10만 효과), P5(보강), P6(긴 영상)에서 해소한다. 테스트 개수나 특정 내부 함수 이름보다 SPEC의 관찰 가능한 수용 기준을 검증한다.
+
+## 공식 참고 자료
+
+2026-11-01 문서 구성 시 확인한 기준이다. 라이브 서비스 정책과 item의 실제 자산은 실행 시 다시 확인한다. 이 참고 목록은 프로젝트 설명을 대체하지 않으며 위 절에 필요한 계약을 직접 기재했다.
+
+- **[R1]** [Earth Search Sentinel-2 C1 L2A collection](https://earth-search.aws.element84.com/v1/collections/sentinel-2-c1-l2a) — collection·visual·SCL 정의.
+- **[R2]** [Earth Search NAIP collection](https://earth-search.aws.element84.com/v1/collections/naip) — image asset·RGBIR·컬렉션별 범위.
+- **[R3]** [Sentinel-2 COG on AWS](https://registry.opendata.aws/sentinel-2-l2a-cogs/) — C1 자산과 계정 없는 접근 안내.
+- **[R4]** [NAIP on AWS](https://registry.opendata.aws/naip/) — 영상 유형·라이선스·Requester Pays.
+- **[R5]** [Microsoft Planetary Computer Python SDK](https://github.com/microsoft/planetary-computer-sdk-for-python) — sign/sign_inplace와 접근 도구.
+- **[R6]** [Rasterio Windowed I/O](https://rasterio.readthedocs.io/en/stable/topics/windowed-rw.html) — 창·블록 읽기 의미와 비용.
+- **[R7]** [Rasterio Transforms](https://rasterio.readthedocs.io/en/stable/topics/transforms.html) — 픽셀 중심·affine·좌표 변환.
+- **[R8]** [Sentinel Hub SCL 분류 설명](https://custom-scripts.sentinel-hub.com/sentinel-2/scene-classification/) — 구름·그림자·NoData·눈 등 클래스 의미.
+- **[R9]** [ffprobe 공식 문서](https://ffmpeg.org/ffprobe.html) — 입력 메타데이터 검사.
+- **[R10]** [Copernicus Sentinel 데이터 고지문](https://cds.climate.copernicus.eu/licences/ec-sentinel) — 재사용·변경·출처 고지.
+
+원문에서 제시한 추가 구현 참고: [Earth Search 안내](https://element84.com/earth-search/), [사용 예](https://element84.com/earth-search/examples), [공개 저장소](https://github.com/Element84/earth-search), [GDAL 원격 파일 시스템](https://gdal.org/en/stable/user/virtual_file_systems.html), [Planetary Computer 접근 개념](https://planetarycomputer.microsoft.com/docs/concepts/sas/), [USDA NAIP 데이터 설명](https://catalog.data.gov/dataset/national-agriculture-imagery-program-naip-imagery). 이 보조 링크의 서비스 접속과 실제 데이터 읽기는 구현 단계에서 확인한다.
