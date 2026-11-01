@@ -149,7 +149,7 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
     tables = quality_tables(valid, scl)
     resources(index)
     records, coarse_values, fine_values, rejected, images = [], [], [], [], {}
-    rotation_images = [] if config.get("collect_rotations", False) else None
+    photo_images = [] if config.get("collect_rotations", False) or config.get("cache_rgb", False) else None
     crs = CRS.from_user_input(reader.src.crs)
     row_map = {}
     heap = [-int(row[0], 16) for row in index.db.execute(
@@ -216,8 +216,8 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
             if len(heap) > config["report_samples"]:
                 heapq.heappop(heap)
         records.append(row)
-        if rotation_images is not None:
-            rotation_images.append(image)
+        if photo_images is not None:
+            photo_images.append(image)
         row_map.setdefault(key, []).append((row, coarse))
         coarse_values.append(coarse)
         fine_values.append(fine)
@@ -226,8 +226,9 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
     if deferred is not None:
         cursor = deferred
     if records or rejected or cursor > job["cursor"]:
-        rotations = {"images": rotation_images, "scene": reader.metadata} if rotation_images is not None else None
-        index.commit(plan, cursor, deferred is None, records, coarse_values, fine_values, rejected, images, rotations)
+        rotations = {"images": photo_images, "scene": reader.metadata} if config.get("collect_rotations", False) else None
+        index.commit(plan, cursor, deferred is None, records, coarse_values, fine_values, rejected, images,
+                     rotations, photos=photo_images if config.get("cache_rgb", False) else None)
         with index.db:
             index.db.execute("UPDATE jobs SET attempts=0 WHERE job_id=?", (plan["job_id"],))
     else:

@@ -21,7 +21,8 @@ class PhotoCache:
         self.stack = ExitStack()
         self.readers, self.scenes, self.plans = {}, {}, {}
         self.cached_job, self.cached_rgb = None, None
-        self.counts = {"png": 0, "block": 0, "remote": 0}
+        self.cached_shard, self.shard_rgb = None, None
+        self.counts = {"png": 0, "shard": 0, "block": 0, "remote": 0}
         self.local = root / "cache/base-photos"
         self.member_sources = {m["index_id"]: (path, m) for path, m, _ in members(root, manifest)} if manifest.get("schema") == "index-bundle-v1" else {}
         self.member_caches = {}
@@ -64,6 +65,17 @@ class PhotoCache:
                     temporary.replace(destination)
                 self.counts["png"] += 1
                 return image
+        if tile.get("rgb_cache_ref"):
+            path = self.root / tile["rgb_cache_ref"]
+            if self.cached_shard != path:
+                self.shard_rgb = np.load(path, mmap_mode="r", allow_pickle=False)
+                self.cached_shard = path
+            data = self.shard_rgb[tile["rgb_cache_row"]]
+            width, height = self.manifest["canonical_size"]
+            if data.shape != (height, width, 3) or data.dtype != np.uint8:
+                raise ValueError("Cached RGB row has an incompatible shape or dtype")
+            self.counts["shard"] += 1
+            return Image.fromarray(data).copy()
         left, top, _, _ = tile["window"]
         size = self.manifest["config"]["block_size"]
         job_id = identity([tile["aoi_id"], tile["scene_id"], left // size, top // size])

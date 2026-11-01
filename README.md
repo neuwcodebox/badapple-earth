@@ -58,7 +58,7 @@ uv run badapple-earth collect --config config/collect.json --output data/index/p
 
 같은 명령을 다시 실행하면 저장한 카탈로그·블록·체크포인트를 사용해 이어간다. 이미 목표 수를 채웠으면 네트워크 요청 없이 종료한다. Ctrl+C는 현재 인덱스를 보존하고, `--stop-after-blocks N`은 지정한 블록 수를 처리한 뒤 체크포인트에서 끝낸다. 같은 설정으로 `--limit`을 높이면 기존 후보를 보존하며 추가 수집한다. 추출·소스·AOI 설정을 바꿀 때는 새 출력 경로를 사용한다.
 
-기본 설정은 12개 AOI·6개 지형군, 3개 지상 스케일, 2048px 읽기 블록과 경계 확장 영역이다. 스케일 균등 할당을 우선하고, 못 채운 수량은 같은 AOI의 다른 유효 스케일에 재배분한다. 실제 RGB·mask·SCL에서 품질을 판단하고, 공통 16×12·32×24 명암 특징과 출처를 Parquet/NumPy shard에 저장한다. 모든 후보 사진을 저장하는 대신 결정적 무작위 표본 200장의 비교 시트를 만든다. 인접한 유사 후보는 출처를 유지하며 표식과 통계로 구분한다.
+기본 설정은 12개 AOI·6개 지형군, 3개 지상 스케일, 2048px 읽기 블록과 경계 확장 영역이다. 스케일 균등 할당을 우선하고, 못 채운 수량은 같은 AOI의 다른 유효 스케일에 재배분한다. 실제 RGB·mask·SCL에서 품질을 판단하고, 공통 16×12·32×24 명암 특징과 출처를 Parquet/NumPy shard에 저장한다. 결정적 무작위 표본 200장의 비교 시트를 만들며, `cache_rgb=true`이면 모든 후보의 canonical RGB도 무손실 shard로 보관한다. 인접한 유사 후보는 출처를 유지하며 표식과 통계로 구분한다.
 
 출력의 `manifest.json`에는 실제 수·지역/스케일 분포·제외 사유·관측 자원이, `jobs.sqlite`에는 작업 상태가 있다. `catalog/`는 고정 장면·추출 계획, `shards/`는 완료 데이터, `cache/blocks/`는 아직 처리할 창이 남은 블록이다. 행 수가 목표보다 적거나 자원 한도에 도달하면 부분 결과를 남기고 종료 코드 1을 반환한다. 현재 RAM 상한 2GiB·인덱스 디스크 예산 4GiB·여유 디스크 하한 1GiB는 `config/collect.json`에서 조정한다.
 
@@ -101,6 +101,19 @@ uv run badapple-earth compare --baseline data/runs/p3-10k-rotations --run data/r
 두 run의 영상이 있으면 `scale-comparison.mp4`도 만든다. 좌측은 원본, 가운데는 기준선, 우측은 확대 결과다.
 
 `--redistribute`는 일부 AOI의 가용 후보가 초기 할당보다 적을 때, 할당을 채운 AOI의 남은 창으로 부족분을 메운다. 같은 지형군을 우선하며 고갈된 AOI는 재배분 대상에서 제외한다. 모든 곳의 여유가 없거나 추가 수집이 진전되지 않으면 실제 부분 결과로 종료한다. 지역별 수량은 manifest에 실제 분포로 남긴다.
+
+100만 단계는 기존 10만에 `collect-million.json`의 600개 AOI에서 90만을 더한다. 새 지역과 기존 지역 주변을 포함한 120개 중심 지역에 서로 겹치지 않는 1도 AOI를 다섯 개씩 배정한다. 지형군은 수집 계획의 분류이며 실제 토지피복을 검증한 라벨이 아니다. 폭 256/512/1024/2048px의 시작 가중치는 15:30:40:15이며, 실제 통과 분포는 부족분 재배분에 따라 달라진다.
+
+```bash
+uv run badapple-earth collect-parallel --config config/collect-million.json --output data/index/p5-additional-900k --limit 900000 --workers 4
+uv run badapple-earth combine --index data/index/p4-100k --index data/index/p5-additional-900k/part-01 --index data/index/p5-additional-900k/part-02 --index data/index/p5-additional-900k/part-03 --index data/index/p5-additional-900k/part-04 --output data/index/p5-1m
+uv run badapple-earth match --targets data/targets/38s-10s-6fps --index data/index/p5-1m --output data/runs/p5-1m --top-k 20
+uv run badapple-earth materialize --targets data/targets/38s-10s-6fps --index data/index/p5-1m --run data/runs/p5-1m
+uv run badapple-earth render --targets data/targets/38s-10s-6fps --run data/runs/p5-1m
+uv run badapple-earth compare --baseline data/runs/p4-100k --run data/runs/p5-1m
+```
+
+`collect-parallel`은 AOI를 결정적으로 분할해 독립 인덱스 네 개를 만들며 같은 명령으로 재개한다. 작업별 로그·설정과 전체 `collection.json`은 출력 폴더에 남긴다. 완료를 기다리는 동안 인덱스를 반복 스캔하지 않는다. 각 작업의 RAM 예산은 3GiB, 디스크 예산은 55GiB이고 모든 작업은 같은 드라이브의 여유 공간 하한 20GiB를 지킨다. 신규 RGB 자체는 약 126GiB를 차지하므로 기존 실행보다 저장 공간이 많이 필요하다. 수집 중 RGB·네 방향 특징을 함께 저장하고 사진 출력에서 재사용한다. 실제 수집·비교 완료 여부는 [PLAN](docs/PLAN.md)에서 확인한다.
 
 ### 7. 선택 실험: 형태 우선 검색과 같은 구간 비교
 

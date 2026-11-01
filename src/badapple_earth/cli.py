@@ -29,6 +29,11 @@ def main() -> int:
     bulk.add_argument("--limit", type=int, default=10000)
     bulk.add_argument("--stop-after-blocks", type=int, help="Checkpoint and exit after this many blocks")
     bulk.add_argument("--redistribute", action="store_true", help="Fill unavailable AOI quotas from completed AOIs, preferring the same terrain group")
+    parallel = commands.add_parser("collect-parallel", help="Collect in independent worker indexes with resumable checkpoints")
+    parallel.add_argument("--config", required=True, type=Path)
+    parallel.add_argument("--output", required=True, type=Path)
+    parallel.add_argument("--limit", required=True, type=int)
+    parallel.add_argument("--workers", default=4, type=int)
     bundle_cmd = commands.add_parser("combine", help="Combine index snapshots by reference, excluding duplicate tiles")
     bundle_cmd.add_argument("--index", type=Path, action="append", required=True)
     bundle_cmd.add_argument("--output", type=Path, required=True)
@@ -86,6 +91,11 @@ def main() -> int:
             result = collect_index(config, args.output, args.limit, args.stop_after_blocks, args.redistribute)
             print(f"{result['status']}: {result['rows']}/{result['requested']} candidates in {args.output}")
             return 0 if result["status"] in {"complete", "paused"} else 1
+        elif args.command == "collect-parallel":
+            from .collection.parallel import collect_parallel
+            result = collect_parallel(json.loads(args.config.read_text(encoding="utf-8")), args.output, args.limit, args.workers)
+            print(f"{result['status']}: {result['rows']}/{result['requested']} places in {args.output}")
+            return 0 if result["status"] == "complete" else 1
         elif args.command == "combine":
             from .collection.bundle import combine
             result = combine(args.index, args.output)

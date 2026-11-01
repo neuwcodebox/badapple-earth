@@ -156,10 +156,18 @@ class Index:
                 return row["tile_id"]
         return None
 
-    def commit(self, plan, cursor, done, records, coarse, fine, rejected, images, rotations=None):
+    def commit(self, plan, cursor, done, records, coarse, fine, rejected, images, rotations=None, photos=None):
         shard_id = identity([plan["job_id"], cursor, [r["tile_id"] for r in records], rejected])
         stage = self.root / "staging" / (shard_id + "-" + uuid.uuid4().hex)
         stage.mkdir()
+        if records and photos is not None:
+            width, height = self.manifest["canonical_size"]
+            data = np.stack([np.asarray(photo) for photo in photos])
+            if data.shape != (len(records), height, width, 3) or data.dtype != np.uint8:
+                raise ValueError("RGB cache rows/shape/dtype do not match tile metadata")
+            np.save(stage / "rgb.npy", data, allow_pickle=False)
+            for position, row in enumerate(records):
+                row.update(rgb_cache_ref=f"shards/{shard_id}/rgb.npy", rgb_cache_row=position)
         for index, row in enumerate(records):
             row.update(shard_id=shard_id, feature_row=index)
             if row["tile_id"] in images:
