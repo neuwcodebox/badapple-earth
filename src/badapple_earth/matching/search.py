@@ -96,6 +96,8 @@ def match(target_root: Path, index_root: Path, output: Path, top_k=20,
                             "source_footprint_json": tile.get("source_footprint_json", tile.get("footprint_json")),
                             "quality_policy": tile.get("quality_policy", "rgb-all-band-mask-v1"),
                             "base_feature_row": tile.get("base_feature_row", tile["feature_row"]),
+                            "rgb_cache_ref": tile.get("rgb_cache_ref"),
+                            "rgb_cache_row": tile.get("rgb_cache_row"),
                             "view_feature_row": tile.get("view_feature_row")})
     pq.write_table(pa.Table.from_pylist(matches), output / "matches.parquet", compression="zstd")
     best = [entry[0][0] / (matrix.shape[1] * 255**2) for entry in retained]

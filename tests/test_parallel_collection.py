@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 from PIL import Image
 import pyarrow.parquet as pq
@@ -57,3 +59,33 @@ def test_rgb_shard_survives_reopen_and_materializes_rotated_views_without_networ
                                           np.asarray(rotate_image(expected, degrees, expected.size)))
         assert cache.counts["remote"] == 0 and cache.counts["shard"] == 8
     reopened.close()
+
+
+def test_mixed_old_and_rgb_cached_indexes_keep_cache_references_in_search_results(tmp_path):
+    import pyarrow as pa
+    from badapple_earth.collection.bundle import combine
+    from badapple_earth.matching.search import match
+    indexes = []
+    for name, value in [("old", 0), ("cached", 255)]:
+        root = tmp_path / name
+        shard = root / "shards/one"
+        shard.mkdir(parents=True)
+        row = {"tile_id": name, "feature_row": 0}
+        if name == "cached":
+            row.update(rgb_cache_ref="shards/one/rgb.npy", rgb_cache_row=0)
+        pq.write_table(pa.Table.from_pylist([row]), shard / "tiles.parquet")
+        np.save(shard / "gray_coarse.npy", np.full((1, 12, 16), value, np.uint8))
+        (root / "manifest.json").write_text(json.dumps({
+            "index_id": name, "feature_version": "test", "canonical_size": [32, 24],
+            "coarse_shape": [12, 16], "shards": [{"shard_id": "one", "rows": 1}]}))
+        indexes.append(root)
+    targets = tmp_path / "targets"
+    targets.mkdir()
+    (targets / "manifest.json").write_text(json.dumps({"target_set_id": "test", "feature_version": "test", "canonical_size": [32, 24]}))
+    np.save(targets / "gray_coarse.npy", np.zeros((1, 12, 16), np.uint8))
+    pq.write_table(pa.Table.from_pylist([{"target_id": "black", "slot": 0}]), targets / "targets.parquet")
+    combine(indexes, tmp_path / "bundle")
+    match(targets, tmp_path / "bundle", tmp_path / "run", rotations=(0,))
+    rows = pq.read_table(tmp_path / "run/matches.parquet").to_pylist()
+    assert rows[0]["tile_id"] == "old" and rows[0]["rgb_cache_ref"] is None
+    assert rows[1]["rgb_cache_ref"] == "shards/one/rgb.npy" and rows[1]["rgb_cache_row"] == 0
