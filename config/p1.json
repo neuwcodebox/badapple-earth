@@ -1,0 +1,18 @@
+{
+  "endpoint": "https://earth-search.aws.element84.com/v1",
+  "collection": "sentinel-2-c1-l2a",
+  "datetime": "2023-01-01/2026-10-31",
+  "cloud_cover_max": 10,
+  "catalog_limit_per_aoi": 30,
+  "scene_attempts_per_aoi": 3,
+  "requester_pays": false,
+  "widths": [256, 512, 1024],
+  "aspect_ratio": [1444, 1080],
+  "preview_width": 256,
+  "max_cloud_ratio": 0.02,
+  "areas": [
+    {"id": "coast-kr", "terrain_group": "coast", "bbox": [125.6, 34.5, 126.8, 35.5]},
+    {"id": "desert-na", "terrain_group": "desert", "bbox": [11.5, 23.0, 12.5, 24.0]},
+    {"id": "agriculture-us", "terrain_group": "agriculture", "bbox": [-94.5, 41.0, -93.5, 42.0]}
+  ]
+}

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "badapple-earth"
+version = "0.1.0"
+description = "Local experiments with real satellite imagery for Bad Apple"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.2,<3",
+  "pillow>=11,<13",
+  "pyproj>=3.7,<4",
+  "pystac-client>=0.9,<0.10",
+  "rasterio>=1.4,<2",
+  "shapely>=2.1,<3",
+]
+
+[project.scripts]
+badapple-earth = "badapple_earth.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.uv]
+cache-dir = ".local/uv-cache"

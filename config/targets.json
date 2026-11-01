@@ -1,0 +1,10 @@
+{
+  "input": "input/badapple.mp4",
+  "start_seconds": 38,
+  "duration_seconds": 10,
+  "sample_fps": 6,
+  "output_fps": 24,
+  "crop": [0, 0, 1444, 1080],
+  "crop_policy": "preserve_full_frame",
+  "audio_mode": "silent_pending_rights_review"
+}
