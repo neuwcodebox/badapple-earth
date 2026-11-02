@@ -82,6 +82,9 @@ def main() -> int:
     metrics.add_argument("--duration", type=float, default=10)
     metrics.add_argument("--top-k", type=int, default=20)
     metrics.add_argument("--workers", type=int, default=8)
+    correlation = commands.add_parser("compare-correlation", help="Search all views by multiscale ZNCC/gradient and compare wide reranking")
+    correlation.add_argument("--config", type=Path, default=Path("config/correlation.json"))
+    correlation.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "probe":
@@ -135,6 +138,10 @@ def main() -> int:
             from .production.comparison import compare_metrics
             result = compare_metrics(args.run, args.output, args.start, args.duration, args.top_k, args.workers)
             print(f"Metric comparison {result['status']}: {result['source_frames']} original frames; {args.output}")
+        elif args.command == "compare-correlation":
+            from .production.correlation.pipeline import compare
+            result = compare(json.loads(args.config.read_text(encoding="utf-8")), args.output)
+            print(f"Wide correlation comparison {result['status']}: {result['source_frames']} original frames; {args.output}")
         elif args.command == "shape-index":
             from .shape.index import build
             result = build(args.index, args.output, args.workers)

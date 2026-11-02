@@ -1,0 +1,16 @@
+{
+  "run": "data/runs/p6-full",
+  "baseline": "data/runs/p6-metrics-top20",
+  "packed_index": "data/packed/p5-1m",
+  "fine_cache": "data/packed/p5-1m-fine",
+  "start": 38,
+  "duration": 10,
+  "retrieval_k": 512,
+  "candidate_batch": 32768,
+  "target_batch": 128,
+  "workers": 8,
+  "structure_weights": [0.7, 0.3],
+  "contrast_min": 0.08,
+  "photo_std_min": 0.02,
+  "shape_window": 0.01
+}

@@ -19,6 +19,7 @@ from ..collection.storage import writer_lock
 from ..collection.windows import identity
 from ..evidence import write_json
 from ..matching.views import rotate_image
+from ..matching.photos import read_rgb_rows
 from .assets import old_rgb_refs, save_image
 from .layout import BG, INK, MUTED, font, resized, timestamp
 from .metrics import LABELS, METHODS, VERSION, image_features, scores, winner
@@ -61,7 +62,7 @@ def cached_photos(run, root, candidates, config, canonical_size):
             raise ValueError("Top-K comparison requires locally cached RGB for every view")
         groups[path].append((position, row))
     for path, jobs in groups.items():
-        array = np.load(path, mmap_mode="r", allow_pickle=False)
+        array = read_rgb_rows(path, [position for position, _ in jobs])
         for position, row in jobs:
             image = Image.fromarray(np.asarray(array[position]))
             transformed = rotate_image(image, row["rotation_degrees"], canonical_size, row["rotation_crop"])
@@ -93,22 +94,26 @@ def evaluate(jobs):
 
 
 def frame(target, candidates, evaluation, config, total):
-    canvas = Image.new("RGB", (1920, 1080), BG)
-    draw = ImageDraw.Draw(canvas)
-    normal = font(config["font_regular"], 18)
-    label = font(config["font_bold"], 23)
     panels = [("SOURCE", target["path"], None, None)]
     for method in METHODS:
         index = evaluation["choices"][method]
         candidate = candidates[index]
-        panels.append((LABELS[method], candidate["path"], candidate["rank"],
+        panels.append((LABELS[method], candidate["path"], f"#{candidate['rank']:02d} / {len(candidates):02d}",
                        evaluation["scores"][method][index]))
-    for i, (name, path, rank, score) in enumerate(panels):
+    return grid_frame(target, panels, config, total)
+
+
+def grid_frame(target, panels, config, total):
+    canvas = Image.new("RGB", (1920, 1080), BG)
+    draw = ImageDraw.Draw(canvas)
+    normal = font(config["font_regular"], 18)
+    label = font(config["font_bold"], 23)
+    for i, (name, path, detail, score) in enumerate(panels):
         x, y = 24 + i % 3 * 632, 16 + i // 3 * 516
         draw.text((x, y), name, font=label, fill=INK)
         canvas.paste(resized(path, 608, 454), (x, y+36))
-        if rank is not None:
-            draw.text((x, y+493), f"#{rank:02d} / {len(candidates):02d}", font=normal, fill=MUTED)
+        if detail is not None:
+            draw.text((x, y+493), detail, font=normal, fill=MUTED)
             draw.text((x+608, y+493), f"{score:.5f}", font=normal, fill=INK, anchor="ra")
     draw.text((24, 1060), f"{timestamp(target['target_time'])}    {target['slot']+1:,} / {total:,}",
               font=font(config["font_regular"], 14), fill=MUTED)

@@ -67,6 +67,23 @@ uv run badapple-earth compare-metrics --run data/runs/p6-full --output data/runs
 
 이 실험의 MS-SSIM은 Top-20 전체를 평가하므로 전곡 버전의 다섯 장소 재평가와 후보 범위가 다르다. 지표 간 점수는 단위가 달라 직접 비교할 수 없다. FSIM 포트는 연구·교육 목적 이용 조건을 따르며 [고지](THIRD_PARTY_NOTICES.md)와 [계산 설정](docs/TECH.md#53-점수-조합과-반복-제어)을 참고한다. 전곡의 기본 선택 설정은 이 비교 실행으로 바뀌지 않는다.
 
+### 전체 데이터에서 ZNCC·Gradient Correlation으로 찾기
+
+MSE Top-20 밖의 사진도 찾으려면 전체 회전 view에서 다중 해상도 ZNCC와 부호 있는 Gradient Correlation으로 각각 검색하고 합집합을 평가한다. 기본은 경로별 512개와 원래 MSE 20개의 합집합이다. 화면에 보여줄 다섯 장소는 평가가 끝난 뒤 고른다.
+
+```powershell
+$env:OPENBLAS_NUM_THREADS = '8'
+$env:OMP_NUM_THREADS = '8'
+$env:NUMBA_NUM_THREADS = '8'
+uv run badapple-earth compare-correlation --config config/correlation.json --output data/runs/p6-correlation
+```
+
+설정 파일에서 구간·후보 수·구조 가중치·최소 실제 대비·밝기 선택 허용폭을 조정한다. 기존 RGB·회전 view를 재사용하며 다운로드는 하지 않는다. 추가 32×24 명암 packing은 약 3.072GB다. 검색은 후보 배치, 정밀 평가는 RGB shard 배치 단위로 재개한다. 정밀 평가 자식 프로세스의 BLAS는 각각 한 스레드로 제한한다.
+
+`comparison.mp4` 위쪽은 원본·기존 Top-20 MS-SSIM·확대 후보 MS-SSIM, 아래쪽은 확대 후보의 ZNCC·GC·ZNCC+GC다. 같은 구간의 모든 원본 프레임을 사용하며 무음이다. `Z#`·`G#`는 독립 검색 경로의 원래 순위이며 `—`는 해당 경로 Top-K 밖이라는 뜻이다. 정규화는 검색 특징에만 적용하며 모든 패널은 실제 원색 RGB를 같은 크기로 표시한다.
+
+`candidates.parquet`는 고유 view의 실제 출처, `shortlists.parquet`는 프레임별 후보·경로 순위, `evaluations.parquet`는 정밀 점수·실제 대비, `selected.parquet`는 다섯 방법의 선택과 fallback 사유를 담는다. `display-five.parquet`는 최종 ZNCC+GC 선택 이후의 서로 다른 다섯 표시 장소다. 새 방법의 시각적 채택 여부와 전곡 변경은 비교 결과로 판단한다.
+
 ### 3. P1 실제 실행
 
 FFmpeg/ffprobe가 PATH에 있고 MP4를 배치했다면 입력 메타데이터·SHA-256과 대표 프레임 비교 시트를 생성한다.

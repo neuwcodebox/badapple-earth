@@ -15,6 +15,31 @@ from ..imagery import SceneReader, check_quality
 from ..sources.sentinel import safe_asset
 
 
+def read_rgb_rows(filename, positions):
+    """Read requested NPY images in bulk, once per unique base photo.
+
+    Avoid small mmap page faults and reading unused RGB images in the shard.
+    """
+    with open(filename, "rb") as stream:
+        version = np.lib.format.read_magic(stream)
+        if version == (1, 0):
+            shape, fortran, dtype = np.lib.format.read_array_header_1_0(stream)
+        elif version == (2, 0):
+            shape, fortran, dtype = np.lib.format.read_array_header_2_0(stream)
+        else:
+            raise ValueError("Unsupported local RGB array format")
+        if fortran or dtype != np.uint8 or len(shape) != 4 or shape[-1] != 3:
+            raise ValueError("RGB cache must contain C-order uint8 images")
+        offset, size = stream.tell(), int(np.prod(shape[1:]))
+        rows = {}
+        for position in sorted(set(positions)):
+            if position < 0 or position >= shape[0]:
+                raise ValueError("RGB row outside its source shard")
+            stream.seek(offset + position*size)
+            rows[position] = np.frombuffer(stream.read(size), dtype=np.uint8).reshape(shape[1:])
+        return rows
+
+
 class PhotoCache:
     def __init__(self, root: Path, manifest: dict, extra: Path | None = None):
         self.root, self.manifest, self.extra = root, manifest, extra

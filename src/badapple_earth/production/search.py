@@ -128,9 +128,11 @@ def resolve(cache: Path, manifest, positions):
     result = {}
     for block_number, indices in groups.items():
         block = blocks[block_number]
-        rows = pq.read_table(cache / block["path"]).to_pylist()
-        for position in indices:
-            tile = dict(rows[int(row_map[position])])
+        # Convert only retrieved rows to Python, rather than every metadata
+        # field of every unselected view in a source shard.
+        offsets = pa.array([int(row_map[position]) for position in indices], type=pa.int64())
+        rows = pq.read_table(cache / block["path"]).take(offsets).to_pylist()
+        for position, tile in zip(indices, rows):
             tile.update(index_member=block["member"], dense_row=position,
                         view_id=tile.get("view_id", tile["tile_id"]),
                         rotation_degrees=tile.get("rotation_degrees", 0),
