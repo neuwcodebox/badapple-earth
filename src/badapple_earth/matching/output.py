@@ -133,6 +133,6 @@ def render(target_root: Path, run_root: Path):
     run["duration_seconds"] = config["duration_seconds"]
     run["frame_mapping"] = "floor(output_time * sample_fps); hold photos, no interpolation"
     run["output_sha256"] = {name: checksum(run_root / name) for name in run["outputs"]}
-    run["quality_conclusion"] = "small_dataset_technical_baseline"
+    run["quality_conclusion"] = "technical_output_pending_playback_review"
     write_json(run_root / "manifest.json", run)
     return run
