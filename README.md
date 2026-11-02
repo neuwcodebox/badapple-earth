@@ -51,6 +51,12 @@ uv run badapple-earth produce --config config/production.json --output data/runs
 
 6,955개 원본 프레임을 모두 쓰고 30000/1001fps를 유지한다. 동일한 검색 특징은 계산만 공유하며 출력 프레임을 생략하거나 보간하지 않는다. 원본 AAC는 로컬 영상에 전체 복사하고, `audio_mode: "silent"`는 무음으로 만든다. 입력에 있는 약 65ms의 오디오 꼬리 때문에 영상 프레임을 추가하지 않는다. 이 경로는 현재 CFR·SAR 1:1 입력을 지원하며 외부 업로드는 하지 않는다.
 
+같은 32×24 검색에서 **MSE 1위만 직접 선택**하는 전곡은 다음 프리셋으로 만든다. 완료된 `p6-grid32-full`의 타깃·검색·사진을 재사용하며 MS-SSIM을 계산하지 않는다. 화면의 점수도 실제 MSE다.
+
+```powershell
+uv run badapple-earth produce --config config/production-mse.json --output data/runs/p6-grid32-mse
+```
+
 후보 평가는 기존 RGB를 재사용하며 PNG는 화면에 표시할 사진만 준비한다. 큰 해상도는 선택된 큰 원본 창에만 요청하고, 실패하면 같은 view의 보관된 사진을 사용한다. 검색용 기본 주소/특징 packing 약 3.4GB와 32×24 uint8 packing 약 3.072GB는 완료 후 재사용하며 전체 float64 캐시를 만들지 않는다. 180프레임 단위로 두 결과를 인코딩해 재시작 시 완료한 구간을 다시 만들지 않는다.
 
 ### 선택 지표 비교
