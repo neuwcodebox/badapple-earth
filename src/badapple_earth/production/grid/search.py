@@ -4,11 +4,15 @@ from pathlib import Path
 import time
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 
 from ...collection.bundle import read_manifest
 from ...collection.windows import identity
+from ...evidence import write_json
 from ...matching.distance import dot_dtype
-from ..search import update_topk
+from ..search import update_topk, pack
 from ..correlation.search import pack_fine
 
 VERSION = "mse-grid16-32-wide-f64-exact-v1"
@@ -93,3 +97,90 @@ def search(run, root, config, targets):
             "elapsed_seconds": round(previous+time.perf_counter()-started, 3),
             "positions16": state["positions0"][inverse], "positions32": state["positions1"][inverse],
             "sse16": state["scores0"][inverse], "sse32": state["scores1"][inverse]}
+
+
+def production_search(target_root, root, config):
+    """All-frame fine-grid production; same exact scanner, one retrieval route."""
+    from ..correlation.pipeline import resolve_metadata
+    from ...matching.views import rotation_recipe, VIEW_VERSION
+    cache, fine_cache = Path(config["packed_index"]), Path(config["fine_cache"])
+    packed, target = pack(Path(config["index"]), cache), read_manifest(target_root)
+    pixels = np.load(target_root / "gray_fine.npy", mmap_mode="r", allow_pickle=False)
+    fine = pack_fine(cache, fine_cache, pixels.shape[1:], config["rerank_workers"])
+    run_id = identity([target["target_set_id"], packed["cache_id"], fine["cache_id"], config["top_k"], VERSION, "fine-production-v1"])
+    root.mkdir(parents=True, exist_ok=True)
+    if (root / "manifest.json").exists():
+        saved = read_manifest(root)
+        if saved["run_id"] != run_id:
+            raise ValueError("Fine production search belongs to a different snapshot or grid")
+        return saved
+    unique, inverse = np.unique(pixels.reshape(len(pixels), -1), axis=0, return_inverse=True)
+    checkpoint_path = root / "retrieval.npz"
+    state, previous = None, 0.0
+    if checkpoint_path.exists():
+        with np.load(checkpoint_path, allow_pickle=False) as saved:
+            if str(saved["run_id"]) != run_id:
+                raise ValueError("Fine search checkpoint has different inputs")
+            state = {key: saved[key].copy() for key in ("scores0", "positions0", "ranks0")}
+            state["next_offset"] = int(saved["next_offset"])
+            previous = float(saved["elapsed_seconds"])
+    candidates = np.load(fine_cache / "gray_fine.npy", mmap_mode="r", allow_pickle=False)
+    ties = np.load(cache / "tie_rank.npy", mmap_mode="r", allow_pickle=False)
+    if len(candidates) != packed["rows"] or candidates.shape[1:] != pixels.shape[1:]:
+        raise ValueError("Fine source features disagree with the production index")
+    started = time.perf_counter()
+    def checkpoint(saved):
+        temporary = checkpoint_path.with_suffix(".tmp")
+        with temporary.open("wb") as stream:
+            np.savez(stream, **saved, run_id=run_id, elapsed_seconds=previous+time.perf_counter()-started)
+        temporary.replace(checkpoint_path)
+        offset = saved["next_offset"]
+        if offset == len(ties) or (offset//config["candidate_batch"]) % 16 == 0:
+            print(f"Full 32x24 MSE: {offset:,}/{len(ties):,} views, {len(unique):,} queries", flush=True)
+    state = scan([unique], [candidates], ties, config["top_k"], config["candidate_batch"],
+                 config["target_batch"], state, checkpoint)
+    seconds = previous+time.perf_counter()-started
+    positions = state["positions0"]
+    wanted = pa.array(np.unique(positions).astype(np.int64))
+    metadata = {}
+    for name in config.get("reuse_scores", []):
+        if read_manifest(Path(name))["index_id"] != packed["index_id"]:
+            raise ValueError("Reusable view metadata has a different index")
+        table = pq.read_table(Path(name) / "candidates.parquet")
+        table = table.filter(pc.is_in(table["dense_row"], value_set=wanted))
+        metadata.update({r["dense_row"]: r for r in table.to_pylist()})
+    if config.get("reuse_run"):
+        previous_run = Path(config["reuse_run"])
+        previous_search = read_manifest(previous_run / "search")
+        if previous_search["index_id"] != packed["index_id"]:
+            raise ValueError("Cached metadata has a different index")
+        table = pq.read_table(previous_run / "search/matches.parquet")
+        _, first = np.unique(table["dense_row"].to_numpy(), return_index=True)
+        table = table.take(pa.array(first.astype(np.int64())))
+        missing = pa.array(sorted(set(wanted.to_pylist())-set(metadata)), type=pa.int64())
+        table = table.filter(pc.is_in(table["dense_row"], value_set=missing))
+        metadata.update({r["dense_row"]: r for r in table.to_pylist()})
+    reused = len(metadata)
+    missing = np.array(sorted(set(wanted.to_pylist())-set(metadata)), dtype=np.int32)
+    metadata.update(resolve_metadata(root, cache, missing, config["rerank_workers"]))
+    rows, dimension = [], unique.shape[1]
+    for query, (scores, choices) in enumerate(zip(state["scores0"], positions)):
+        for rank, (sse, position) in enumerate(zip(scores, choices), 1):
+            row = {**metadata[int(position)], "query":query, "rank":rank,
+                   "sse":int(sse), "raw_mse":int(sse)/(dimension*255**2)}
+            row["rotation_crop"] = row.get("rotation_crop") or rotation_recipe(target["canonical_size"], row["rotation_degrees"])
+            rows.append(row)
+    temporary = root / "matches.tmp.parquet"
+    pq.write_table(pa.Table.from_pylist(rows), temporary, compression="zstd")
+    temporary.replace(root / "matches.parquet")
+    np.save(root / "query_inverse.npy", inverse, allow_pickle=False)
+    result = {"run_id":run_id, "status":"complete", "target_set_id":target["target_set_id"],
+              "index_id":packed["index_id"], "candidate_count":packed["places"], "view_count":packed["rows"],
+              "source_frames":len(inverse), "unique_queries":len(unique), "top_k":config["top_k"],
+              "grid":[pixels.shape[2],pixels.shape[1]], "dimension":dimension,
+              "metric":"gray-mse-[0,1]-v1", "accumulation":"integer-exact float64 BLAS then integer SSE",
+              "tie_break":"view_id ascending", "view_version":VIEW_VERSION, "rotations":[0,90,180,270],
+              "retrieval_seconds":round(seconds,3), "metadata_reused_views":reused,
+              "best_mse_mean":float(np.mean(state["scores0"][inverse,0]))/(dimension*255**2)}
+    write_json(root / "manifest.json", result)
+    return result

@@ -47,10 +47,13 @@ def evaluate(root, run, source, targets, metadata, shortlists, config):
     slots = pa.array([r["slot"] for r in targets], type=pa.int64())
     positions = pa.array(sorted(metadata), type=pa.int64())
     reused, audit = {}, []
+    target_id = read_manifest(run / "targets")["target_set_id"]
+    index_id = read_manifest(Path(source["config"]["index"]))["index_id"]
     for name in config.get("reuse_scores", []):
         cache = Path(name)
         manifest = read_manifest(cache)
-        if manifest.get("ms_ssim_version") != SSIM_VERSION:
+        if (manifest.get("ms_ssim_version") != SSIM_VERSION or manifest.get("target_set_id") != target_id
+                or manifest.get("index_id") != index_id):
             raise ValueError("Reusable MS-SSIM scores need the same explicit metric version")
         table = pq.read_table(cache / "evaluations.parquet", columns=["slot", "dense_row", "ms_ssim"])
         table = table.filter(pc.and_(pc.is_in(table["slot"], value_set=slots),

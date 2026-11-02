@@ -16,11 +16,15 @@ def reuse(root, config):
     saved = read_manifest(previous)
     if saved["status"] != "complete":
         raise ValueError("Reuse source must be a completed production")
-    if any(saved["config"][key] != config[key] for key in ("input", "crop", "frame_mode", "index", "top_k")):
+    if any(saved["config"][key] != config[key] for key in ("input", "crop", "frame_mode", "index")):
         raise ValueError("Reuse source has different targets, index or retrieval settings")
     # Hard links are safe because generated tables/manifests are published by
     # replacement, never modified through the linked inode.
-    for subdir in ("targets", "search", "assets/thumbs", "assets/selected"):
+    subdirs = ["targets", "assets/thumbs", "assets/selected", "photos"]
+    if (saved["config"].get("search_grid", "coarse") == config.get("search_grid", "coarse")
+            and saved["config"]["top_k"] == config["top_k"]):
+        subdirs.append("search")
+    for subdir in subdirs:
         source = previous / subdir
         for path in source.rglob("*"):
             if not path.is_file() or path.name == "writer.lock":

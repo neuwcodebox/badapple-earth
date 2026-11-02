@@ -360,7 +360,7 @@ data/
 
 현재 제작 경로는 MSE 전수 검색이다. 같은 10만 후보·10초 구간의 사용자 재생 평가에서 MSE가 형태 우선 방식보다 나았다. 형태 점수 감소를 실제 영상 품질 개선으로 판정하지 않으며, 기본 경로의 변경에는 재생 품질의 근거를 둔다.
 
-최종 선택은 MSE 후보 검색과 구분한다. `selection_method=ms-ssim`은 표시할 다섯 장소 사진에만 MS-SSIM을 적용하며 후보 순서는 MSE 그대로다. `mse`는 첫 후보를 선택하는 비교 모드다. 이전 전체 형태 검색 실험을 다시 전수 적용하지 않는다.
+기본 제작은 `search_grid=fine`의 32×24 MSE Top-20 검색과 `selection_method=ms-ssim`, `rerank_top_k=20`의 전체 후보 평가다. `display_top_k=5`는 평가 뒤의 표시 수이며 검색·평가 수를 제한하지 않는다. `mse`는 첫 검색 후보를 선택하는 비교 모드다. 이전 전체 형태 검색 실험을 다시 전수 적용하지 않는다.
 
 [형태 검색 v2.1](SHAPE_MATCHING.md)은 독립 실험이다. PHOG·Rank 각 Top-2048의 합집합을 두 스케일·다섯 분위수의 영역/SDF로 평가하고, coarse 상위 256개와 경로별 상위 64개에 SDF·양방향 Chamfer·Balanced IoU를 적용한다. `D_shape=0.40 SDF+0.35 Chamfer+0.25 region`과 최소 대비·형태 허용폭·광도 선택은 해당 실험의 계약으로 보존한다. MSE로 실험의 앞단 후보를 제한하지 않는다.
 
@@ -386,13 +386,15 @@ FAISS는 초기 필수 의존성이 아니다. 반복 검색이 병목으로 확
 
 전곡용 `production/search.py`는 고정 bundle의 네 방향을 한 번 연속 배열로 packing한다. 400만×192 float32 특징은 약 3.072GB이고 norm·view ID·원본 shard 행 주소·동률 순위를 함께 보관한다. 원본 Parquet/특징은 유지하며 완료 캐시를 메모리 매핑으로 재사용한다. packing은 100개 source descriptor마다 체크포인트를 저장한다.
 
-검색은 타깃 128개·후보 65,536개씩 BLAS로 계산하고 Numba로 정확한 Top-20을 유지한다. 전체 view ID의 사전순 순위를 동률 처리에 사용하므로 source shard 순서와 무관하게 기존 선택이 유지된다. 타깃의 coarse 특징이 완전히 같은 경우 계산을 공유하되 `query_inverse.npy`로 모든 원본 프레임을 복원한다. 완료한 타깃 배치는 원자적 NPZ로 저장해 재개하며 전체 거리 행렬을 남기지 않는다. BLAS와 Numba는 이 실행에서 각각 8개 스레드다.
+16×12 비교 경로는 타깃 128개·후보 65,536개씩 BLAS로 계산하고 Numba로 정확한 Top-20을 유지한다. 전체 view ID의 사전순 순위를 동률 처리에 사용하므로 source shard 순서와 무관하게 기존 선택이 유지된다. 타깃의 coarse 특징이 완전히 같은 경우 계산을 공유하되 `query_inverse.npy`로 모든 원본 프레임을 복원한다. 완료한 타깃 배치는 원자적 NPZ로 저장해 재개하며 전체 거리 행렬을 남기지 않는다. 기본 32×24 경로는 아래의 fine 배열·후보 스트리밍을 사용한다.
 
 #### 5.3 점수 조합과 반복 제어
 
 `production/rerank.py`는 256×191 grayscale에서 5단계 MS-SSIM을 계산한다. Gaussian 11×11·σ1.5, K1=.01·K2=.03, 2×2 평균 다운샘플과 홀수 경계 reflect padding, 원 논문의 가중치 `.0448/.2856/.3001/.2363/.1333`을 사용한다. 각 단계의 유효 창에서 평균 contrast/structure를 구하고 마지막 단계에 luminance를 포함해 곱한다. 음수 분수 거듭제곱을 피하도록 단계 평균은 [1e-8,1]로 제한한다. [MS-SSIM 원 논문](https://ece.uwaterloo.ca/~z70wang/publications/msssim.html)과 [SSIM 저자 설명](https://www.cns.nyu.edu/~lcv/ssim/)을 참고한다.
 
-각 실제 source frame의 full canonical grayscale을 평가한다. coarse 특징이 같아 MSE 검색을 공유해도 미세한 명암 구조가 다를 수 있으므로 재평가 결과를 coarse query 단위로 묶지 않는다. 다섯 후보의 점수 최대를 선택하고 동률이면 MSE 순위·view ID 순서를 따른다. 여덟 프로세스와 프로세스별 bounded candidate 통계 캐시를 사용하며 180프레임 배치를 저장해 재개한다. 점수가 높다는 사실만으로 이 작품의 재생 품질 개선을 판정하지 않는다.
+각 실제 source frame의 full canonical grayscale을 평가한다. 검색 특징이 같아 MSE 계산을 공유해도 미세한 명암 구조가 다를 수 있으므로 재평가는 source frame별이다. 20개 전체의 점수 최대를 선택하고 동률이면 MSE 순위·view ID 순서를 따른다. `grid/rerank.py`의 RGB shard별 여덟 프로세스·bounded 타깃 통계 캐시·버전이 맞는 기존 점수·완료 Parquet 배치를 재사용한다. PNG는 최종 선택과 다른 네 장소의 표시가 정해진 뒤 필요한 것만 준비한다. 같은 장소의 다른 회전이 더 앞에 있어도 최종 선택의 방향을 보여주며, 다섯 장소를 원래 MSE 순위로 정렬한다. 표시 순번과 원래 검색 순위를 혼동하지 않도록 숫자는 검색 순위를 사용한다. 점수가 높다는 사실만으로 재생 품질 개선을 판정하지 않는다.
+
+기본 전곡의 `grid/search.production_search()`는 fine 배열만 사용하는 단일 검색 경로다. 같은 fine 원배열의 검색 계산만 공유하고 `query_inverse.npy`로 모든 원본 프레임을 복원한다. 기본 주소/ID packing과 같은 행 순서의 uint8 fine cache를 사용하며 float64 변환은 현재 배치에만 한다. 격자 또는 K가 다른 `reuse_run`에서는 타깃·사진만 재사용하고 검색은 복사하지 않는다. 새로운 선택에서 큰 표시 크기에 필요한 원본 픽셀만 추가 읽으며 이미 있는 native PNG는 재사용한다. 이전 16 격자·다섯 장소 전곡은 완료 비교 산출물로 보존한다.
 
 `compare-metrics`는 전곡 선택 설정과 독립된 동일 후보 비교다. `production/comparison.py`가 완료 run의 Top-20 view와 실제 PTS를 읽고, 지정 구간의 모든 원본 프레임에서 아래 다섯 지표를 평가한다. 서로 다른 장소 다섯 장으로 줄이지 않으며 같은 장소의 다른 회전도 원래 검색 결과에 있으면 유지한다. 기존 다섯 장소 MS-SSIM의 선택도 같은 계산에서 구해 후보 범위 확대의 영향을 따로 기록한다.
 
@@ -472,7 +474,7 @@ MP4는 일반 재생 호환성을 고려한 H.264/yuv420p 계열을 우선 검�
 
 `frame-plan.parquet`는 모든 source frame과 원본/후보/선택 이미지·메타데이터를, `selected.parquet`는 각 프레임의 실제 장소·view·출처를 연결한다. `search/matches.parquet`와 `query_inverse.npy`에서 전체 Top-K를 추적한다. 공개 업로드는 이 로컬 제작 경로에 포함하지 않는다.
 
-후속 제작의 `reuse_run`은 완료 run의 타깃·MSE 검색·기존 썸네일·native 사진을 같은 디스크의 hard link 또는 복사로 재사용한다. 입력·크롭·인덱스·Top-K 설정 일치를 확인하고 생성한 테이블/manifest는 원자적 교체로 게시해 이전 run을 수정하지 않는다. 선택이 달라져 처음 필요한 큰 사진만 추가 읽는다.
+후속 제작의 `reuse_run`은 입력·크롭·인덱스가 같은 완료 run의 타깃·기존 썸네일·native 사진을 같은 디스크의 hard link 또는 복사로 재사용한다. MSE 검색은 격자와 Top-K도 같을 때만 재사용한다. 생성한 테이블/manifest는 원자적 교체로 게시해 이전 run을 수정하지 않는다. 선택이 달라져 처음 필요한 큰 사진만 추가 읽는다. MS-SSIM 전곡도 비교 run과 같은 고유 `candidates.parquet`·`evaluations.parquet`와 인덱스/타깃/지표 버전을 남겨 다음 실험에서 점수를 재사용할 수 있다.
 
 ### 7. 보고서와 품질 의사결정
 

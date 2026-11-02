@@ -2,7 +2,7 @@
 
 Bad Apple!!의 각 프레임과 형태·명암이 닮은 **실제 위성·항공사진 한 장**을 찾아 영상을 재구성하는 로컬 제작 도구다. 그림을 새로 생성하거나 여러 장소를 합성하지 않고, 실제 지구에서 촬영된 장면 자체를 검색한다.
 
-> **기본 제작은 모든 원본 프레임의 MSE 후보 검색과 MS-SSIM 재평가다.** 16:9 화면에는 작은 원본·후보 다섯 장·선택 연결선·큰 사진을 배치한다. 시간·프레임·점수는 작게 정돈하고 좌표·촬영일을 한 줄로 표시한다. 100만 장소·400만 회전 view와 기존 영상 캐시를 재사용한다. 실제 실행·재생 평가 상태는 [PLAN](docs/PLAN.md)에서 관리한다.
+> **기본 제작은 모든 원본 프레임의 32×24 MSE Top-20 검색과 20개 전체의 MS-SSIM 재평가다.** 최종 선택 뒤에 서로 다른 표시 장소 다섯 개를 고른다. 16:9 화면에는 작은 원본·후보 다섯 장·선택 연결선·큰 사진을 배치한다. 시간·프레임·실제 MSE 순위·점수는 작게 정돈하고 좌표·촬영일을 한 줄로 표시한다. 100만 장소·400만 회전 view와 기존 영상 캐시를 재사용한다. 실제 실행·재생 평가 상태는 [PLAN](docs/PLAN.md)에서 관리한다.
 
 ## 주요 기능과 목표
 
@@ -40,18 +40,18 @@ uv run pytest -q --basetemp .local/pytest
 $env:OPENBLAS_NUM_THREADS = '8'
 $env:OMP_NUM_THREADS = '8'
 $env:NUMBA_NUM_THREADS = '8'
-uv run badapple-earth produce --config config/production.json --output data/runs/p6-refined
+uv run badapple-earth produce --config config/production.json --output data/runs/p6-grid32-full
 ```
 
 같은 명령으로 packing·검색·사진 준비·완료 인코딩 segment를 재사용하며 이어간다. `config/production.json`에서 입력·인덱스·로컬 글꼴·인코딩 작업 수·오디오를 조정한다. 기본 글꼴 캐시가 없으면 Windows Segoe UI 또는 사용 가능한 DejaVu Sans를 찾고, 없으면 직접 지정한다. 글꼴 파일은 Git에 포함하지 않는다.
 
-최종 출력은 `final-16x9.mp4`(1920×1080), `satellite-full.mp4`(원래 콘텐츠 비율의 사진 전용), `preview.png`, 전 프레임 `selected.parquet`·`frame-plan.parquet`, 전체 Top-20의 `search/matches.parquet`, `credits.json`이다. 후보는 MSE 순서대로 유지하고 MS-SSIM이 고른 위치를 강조한다. 타이틀·슬로건은 표시하지 않으며 시간·프레임 카운터·후보 점수와 사진 아래 좌표·촬영일만 간결하게 보여준다.
+최종 출력은 `final-16x9.mp4`(1920×1080), `satellite-full.mp4`(원래 콘텐츠 비율의 사진 전용), `preview.png`, 전 프레임 `selected.parquet`·`frame-plan.parquet`, 전체 Top-20의 `search/matches.parquet`, `credits.json`이다. MS-SSIM 최종 선택과 MSE 상위의 다른 네 장소를 실제 MSE 순서대로 표시하고 선택 위치를 강조한다. 같은 장소의 다른 방향이 먼저 검색되어도 선택된 방향을 표시한다. 숫자는 표시 행 번호가 아닌 원래 Top-20의 MSE 순위다. 타이틀·슬로건은 표시하지 않으며 시간·프레임 카운터·후보 점수와 사진 아래 좌표·촬영일만 간결하게 보여준다.
 
-`selection_method`는 `ms-ssim` 또는 비교용 `mse`다. 재평가 대상은 표시할 다섯 장소이며 점수의 동률은 MSE 순서를 유지한다. 기본 `reuse_run`은 앞서 완성한 `data/runs/p6-full`의 타깃·검색·사진 캐시를 재사용한다. 이 run이 없는 환경에서는 `reuse_run`을 지우고 실행한다. `rerank/`에는 모든 프레임의 후보별 점수·선택·재개 상태가 남는다. 새 방법의 작품성은 실제 영상을 비교해 판단한다.
+`search_grid: "fine"`는 32×24, `coarse`는 비교용 16×12다. `selection_method`는 `ms-ssim` 또는 비교용 `mse`다. 기본 `rerank_top_k: 20`은 장소·회전을 먼저 줄이지 않고 20개 view를 모두 평가하며 동률은 MSE 순서다. `display_top_k: 5`는 평가 이후의 표시 수다. 기본 `reuse_run`은 앞서 완성한 `data/runs/p6-refined`의 타깃·사진을 재사용하되 격자가 다른 검색은 복사하지 않는다. `reuse_scores`는 같은 타깃·인덱스·MS-SSIM 버전의 이전 점수 run이다. 이 산출물이 없는 환경에서는 두 재사용 설정을 지우고 실행한다. `evaluations.parquet`·`scores/`에는 모든 프레임×후보의 MS-SSIM과 재개 상태가 남는다. 새 방법의 작품성은 실제 영상을 비교해 판단한다.
 
 6,955개 원본 프레임을 모두 쓰고 30000/1001fps를 유지한다. 동일한 검색 특징은 계산만 공유하며 출력 프레임을 생략하거나 보간하지 않는다. 원본 AAC는 로컬 영상에 전체 복사하고, `audio_mode: "silent"`는 무음으로 만든다. 입력에 있는 약 65ms의 오디오 꼬리 때문에 영상 프레임을 추가하지 않는다. 이 경로는 현재 CFR·SAR 1:1 입력을 지원하며 외부 업로드는 하지 않는다.
 
-후보 썸네일은 기존 RGB를 재사용한다. 큰 해상도는 선택된 큰 원본 창에만 요청하고, 실패하면 같은 view의 보관된 사진을 사용한다. 검색용 packing은 약 3.4GB의 추가 로컬 캐시이며 완료 후 재사용한다. 180프레임 단위로 두 결과를 인코딩해 재시작 시 완료한 구간을 다시 만들지 않는다.
+후보 평가는 기존 RGB를 재사용하며 PNG는 화면에 표시할 사진만 준비한다. 큰 해상도는 선택된 큰 원본 창에만 요청하고, 실패하면 같은 view의 보관된 사진을 사용한다. 검색용 기본 주소/특징 packing 약 3.4GB와 32×24 uint8 packing 약 3.072GB는 완료 후 재사용하며 전체 float64 캐시를 만들지 않는다. 180프레임 단위로 두 결과를 인코딩해 재시작 시 완료한 구간을 다시 만들지 않는다.
 
 ### 선택 지표 비교
 
@@ -65,7 +65,7 @@ uv run badapple-earth compare-metrics --run data/runs/p6-full --output data/runs
 
 `comparison.mp4`는 위쪽 원본·MSE·MS-SSIM, 아래쪽 FSIM·Multi-MSE·ZNCC의 2×3 비교 영상이다. 알고리즘명·선택된 사진의 원래 MSE 순위·해당 지표 점수와 작은 시간·프레임 카운터를 표시한다. 무음이며 각 패널은 같은 canonical RGB를 사용한다. `evaluations.parquet`에는 모든 프레임×후보의 점수와 출처, `selected.parquet`에는 방법별 선택, `manifest.json`에는 설정·변경 수·선택 순위 분포·비용이 남는다. 같은 명령으로 완료 점수 배치를 재사용한다.
 
-이 실험의 MS-SSIM은 Top-20 전체를 평가하므로 전곡 버전의 다섯 장소 재평가와 후보 범위가 다르다. 지표 간 점수는 단위가 달라 직접 비교할 수 없다. FSIM 포트는 연구·교육 목적 이용 조건을 따르며 [고지](THIRD_PARTY_NOTICES.md)와 [계산 설정](docs/TECH.md#53-점수-조합과-반복-제어)을 참고한다. 전곡의 기본 선택 설정은 이 비교 실행으로 바뀌지 않는다.
+이 지표 비교는 `p6-full`의 16×12 검색 Top-20을 사용하며 현재 기본 제작의 32×24 검색과 구분한다. 지표 간 점수는 단위가 달라 직접 비교할 수 없다. FSIM 포트는 연구·교육 목적 이용 조건을 따르며 [고지](THIRD_PARTY_NOTICES.md)와 [계산 설정](docs/TECH.md#53-점수-조합과-반복-제어)을 참고한다. 비교 명령은 전곡의 설정을 변경하지 않는다.
 
 ### MSE 격자 해상도와 후보 수 높이기
 

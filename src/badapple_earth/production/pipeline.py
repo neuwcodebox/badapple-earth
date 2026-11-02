@@ -21,6 +21,8 @@ def produce(config, output: Path):
         raise ValueError("This presentation uses a 1920x1080 canvas and five distinct places")
     if config["frame_mode"] != "all" or config["top_k"] < 20:
         raise ValueError("Production needs every source frame and at least 20 ranked views")
+    if not config["display_top_k"] <= config.get("rerank_top_k",config["display_top_k"]) <= config["top_k"]:
+        raise ValueError("Display count must fit within the reranking and retrieval pools")
     if config["crop"][2] % 2 or config["crop"][3] % 2:
         raise ValueError("The pure-photo H.264 output needs even dimensions")
     production_id = identity([config, "all-frame-production-v1"])
@@ -39,8 +41,14 @@ def produce(config, output: Path):
         try:
             state.update(status="search", source_frames=target["count"], target_set_id=target["target_set_id"])
             write_json(path, state)
-            result = search(output / "targets", Path(config["index"]), Path(config["packed_index"]), output / "search",
-                            config["top_k"], config["target_batch"])
+            if config.get("search_grid", "coarse") == "fine":
+                from .grid.search import production_search
+                result = production_search(output / "targets", output / "search", config)
+            elif config.get("search_grid", "coarse") == "coarse":
+                result = search(output / "targets", Path(config["index"]), Path(config["packed_index"]), output / "search",
+                                config["top_k"], config["target_batch"])
+            else:
+                raise ValueError("search_grid must be coarse or fine")
             state.update(status="assets", search=result)
             write_json(path, state)
             assets = prepare(output, config)
@@ -50,6 +58,8 @@ def produce(config, output: Path):
             result = render(output, config, rows)
             state.update(status="complete", output=result, finished_at=datetime.now(timezone.utc).isoformat(),
                          input_sha256=target["input_sha256"], source_index=state["search"]["index_id"],
+                         index_id=state["search"]["index_id"],
+                         ms_ssim_version=assets["selection_version"] if config.get("selection_method")=="ms-ssim" else None,
                          playback_review="not_performed", external_publication="not_performed")
             write_json(output / "credits.json", {"source": "Contains modified Copernicus Sentinel data", "acquisition_years": assets["acquisition_years"],
                        "data_reference": "https://registry.opendata.aws/sentinel-2-l2a-cogs/",

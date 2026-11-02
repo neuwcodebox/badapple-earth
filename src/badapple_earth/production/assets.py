@@ -3,6 +3,7 @@
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,7 @@ from rasterio.windows import Window
 from ..collection.bundle import members, read_manifest
 from ..evidence import write_json
 from ..imagery import GDAL_OPTIONS
-from ..matching.photos import PhotoCache
+from ..matching.photos import PhotoCache, read_rgb_rows
 from ..matching.views import rotate_image
 from ..sources.sentinel import safe_asset
 from .layout import location_caption
@@ -85,6 +86,65 @@ def old_rgb_refs(extra, wanted):
     return result
 
 
+def cached_photos(run, root, candidates, config, canonical_size, relative_folder="photos"):
+    """Materialize only missing views from stored RGB shards; never open a URL."""
+    destination = root / relative_folder
+    destination.mkdir(parents=True, exist_ok=True)
+    missing = {}
+    counts = {"reused_png": 0, "rgb_shard": 0, "remote": 0}
+    for row in candidates:
+        path = destination / f"{row['view_id']}.png"
+        if path.exists():
+            continue
+        existing = run / "assets/thumbs" / path.name
+        if existing.exists():
+            try:
+                path.hardlink_to(existing)
+            except OSError:
+                shutil.copyfile(existing, path)
+            counts["reused_png"] += 1
+        else:
+            missing[row["view_id"]] = row
+    extra = Path(config["extra_rgb_cache"]) if config.get("extra_rgb_cache") else None
+    refs = old_rgb_refs(extra, {r["tile_id"] for r in missing.values() if not r.get("rgb_cache_ref")})
+    from ..collection.bundle import members
+    index_root = Path(config["index"])
+    sources = {manifest["index_id"]: directory
+               for directory, manifest, _ in members(index_root, read_manifest(index_root))}
+    groups = defaultdict(list)
+    for row in missing.values():
+        if row["tile_id"] in refs:
+            path, position = refs[row["tile_id"]]
+        elif row.get("rgb_cache_ref"):
+            path = sources[row["index_member"]] / row["rgb_cache_ref"]
+            position = row["rgb_cache_row"]
+        else:
+            raise ValueError("Top-K comparison requires locally cached RGB for every view")
+        groups[path].append((position, row))
+    for path, jobs in groups.items():
+        array = read_rgb_rows(path, [position for position, _ in jobs])
+        for position, row in jobs:
+            image = Image.fromarray(np.asarray(array[position]))
+            transformed = rotate_image(image, row["rotation_degrees"], canonical_size, row["rotation_crop"])
+            save_image(transformed, destination / f"{row['view_id']}.png")
+            counts["rgb_shard"] += 1
+    return counts
+
+
+def displayed_candidates(pool, choice, count):
+    """Keep the real winner and best other places in original retrieval order."""
+    shown, seen = [choice], {choice["tile_id"]}
+    for row in sorted(pool, key=lambda r: (r["rank"], r["view_id"])):
+        if row["tile_id"] not in seen:
+            shown.append(row)
+            seen.add(row["tile_id"])
+            if len(shown) == count:
+                break
+    if len(shown) != count:
+        raise ValueError("The retrieval pool has too few distinct places to display")
+    return sorted(shown, key=lambda r: (r["rank"], r["view_id"]))
+
+
 def prepare(root: Path, config):
     if (root / "frame-plan.parquet").exists():
         return json.loads((root / "assets/manifest.json").read_text(encoding="utf-8"))
@@ -97,8 +157,15 @@ def prepare(root: Path, config):
     by_query = defaultdict(list)
     for row in matches:
         by_query[row["query"]].append(row)
+    full_pool = config.get("rerank_top_k", config["display_top_k"]) > config["display_top_k"]
     top, thumbnails, selected = {}, {}, {}
     for query, rows in by_query.items():
+        if full_pool:
+            chosen = sorted(rows, key=lambda r: r["rank"])[:config["rerank_top_k"]]
+            if len(chosen) != config["rerank_top_k"]:
+                raise ValueError("Retrieval has fewer views than the configured reranking pool")
+            top[query] = chosen
+            continue
         chosen, seen = [], set()
         for row in sorted(rows, key=lambda r: r["rank"]):
             if row["tile_id"] in seen:
@@ -125,7 +192,8 @@ def prepare(root: Path, config):
     by_tile = defaultdict(list)
     for row in thumbnails.values():
         by_tile[(row["index_member"], row["tile_id"])].append(row)
-    print(f"Assets: {len(thumbnails):,} candidate views, {len(selected):,} selected views", flush=True)
+    print((f"Assets: evaluate {config['rerank_top_k']} views before choosing display places" if full_pool else
+           f"Assets: {len(thumbnails):,} candidate views, {len(selected):,} selected views"), flush=True)
     cached_path, cached_array = None, None
     with PhotoCache(index_root, index) as photos:
         for number, (_, rows) in enumerate(sorted(by_tile.items(), key=lambda item: (item[0][0], item[1][0].get("rgb_cache_ref") or "", item[0][1]))):
@@ -147,7 +215,37 @@ def prepare(root: Path, config):
             if (number + 1) % 500 == 0:
                 print(f"Candidate RGB: {number+1:,}/{len(by_tile):,} places", flush=True)
     targets = pq.read_table(root / "targets/targets.parquet").to_pylist()
-    choices = rerank(root, targets, inverse, top, config)
+    score_audit = None
+    if full_pool:
+        if config.get("selection_method") == "ms-ssim":
+            from .grid.rerank import evaluate
+            metadata = {row["dense_row"]: row for pool in top.values() for row in pool}
+            canonical_rows = [{k:v for k,v in row.items() if k not in {"query","rank","sse","raw_mse"}}
+                              for row in metadata.values()]
+            canonical_path = root / "candidates.tmp.parquet"
+            pq.write_table(pa.Table.from_pylist(canonical_rows), canonical_path, compression="zstd")
+            canonical_path.replace(root / "candidates.parquet")
+            shortlist = [{"slot":row["slot"], "dense_row":candidate["dense_row"]}
+                         for row, query in zip(targets, inverse) for candidate in top[int(query)]]
+            measured, score_audit = evaluate(root, root, {"config":config}, targets, metadata, shortlist,
+                                             {**config, "workers":config["rerank_workers"]})
+            scores = {(row["slot"],row["dense_row"]):row["ms_ssim"] for row in measured}
+            choices = []
+            for row, query in zip(targets, inverse):
+                pool = top[int(query)]
+                values = [scores[row["slot"],c["dense_row"]] for c in pool]
+                winner = min(range(len(pool)), key=lambda i: (-values[i],pool[i]["rank"],pool[i]["view_id"]))
+                choices.append({"slot":row["slot"], "selected_index":winner, "scores":values})
+        else:
+            choices = rerank(root, targets, inverse, top, config)
+        for row, query, evaluation in zip(targets,inverse,choices):
+            pool = top[int(query)]
+            for candidate in displayed_candidates(pool, pool[evaluation["selected_index"]], config["display_top_k"]):
+                thumbnails[candidate["view_id"]] = candidate
+        cached_photos(Path(config.get("reuse_run", root)), root, thumbnails.values(), config,
+                      tuple(target["canonical_size"]), relative_folder="assets/thumbs")
+    else:
+        choices = rerank(root, targets, inverse, top, config)
     selected = {top[int(query)][choice["selected_index"]]["view_id"]: top[int(query)][choice["selected_index"]]
                 for query, choice in zip(inverse, choices)}
     groups = defaultdict(list)
@@ -170,9 +268,12 @@ def prepare(root: Path, config):
     years = sorted({r["acquired_at"][:4] for r in thumbnails.values()})
     credit = "Contains modified Copernicus Sentinel data " + (years[0] if len(years) == 1 else f"{years[0]}–{years[-1]}")
     for row, query, evaluation in zip(targets, inverse, choices):
-        candidates = top[int(query)]
-        selected_index = evaluation["selected_index"]
-        choice = candidates[selected_index]
+        pool = top[int(query)]
+        choice_index = evaluation["selected_index"]
+        choice = pool[choice_index]
+        candidates = displayed_candidates(pool, choice, config["display_top_k"])
+        selected_index = next(i for i,c in enumerate(candidates) if c["view_id"] == choice["view_id"])
+        candidate_scores = {c["view_id"]:score for c,score in zip(pool,evaluation["scores"])}
         image = hero / f"{choice['view_id']}.png"
         if not image.exists():
             image = thumbs / image.name
@@ -185,15 +286,18 @@ def prepare(root: Path, config):
                        "selected_image": image.relative_to(root).as_posix(), "caption": location_caption(choice),
                        "candidates": [{"path": (thumbs / f"{c['view_id']}.png").relative_to(root).as_posix(),
                                        "rank": c["rank"], "raw_mse": c["raw_mse"], "view_id": c["view_id"],
-                                       "selection_score": score} for c, score in zip(candidates, evaluation["scores"])]})
+                                       "selection_score": candidate_scores[c["view_id"]]} for c in candidates]})
         selections.append({**choice, "slot": row["slot"], "source_pts": row["source_pts"],
-                           "selected_candidate": selected_index, "selection_score": evaluation["scores"][selected_index],
+                           "selected_candidate": selected_index, "selection_score": evaluation["scores"][choice_index],
                            "selection_method": config.get("selection_method", "mse"),
                            "source_time_base": row["source_time_base"], "image": image.relative_to(root).as_posix()})
     selection_path = root / "selected.tmp.parquet"
     pq.write_table(pa.Table.from_pylist(selections), selection_path, compression="zstd")
     selection_path.replace(root / "selected.parquet")
     result = {"candidate_views": len(thumbnails), "selected_views": len(selected),
+              "evaluated_views":len({c["view_id"] for pool in top.values() for c in pool}),
+              "rerank_candidates_per_frame":config.get("rerank_top_k",config["display_top_k"]),
+              "score_cache":score_audit,
               "selection_method": config.get("selection_method", "mse"),
               "selection_version": RERANK_VERSION if config.get("selection_method") == "ms-ssim" else "gray-mse-[0,1]-v1",
               "selected_places": len({r["tile_id"] for r in selected.values()}), "native_results": audit,

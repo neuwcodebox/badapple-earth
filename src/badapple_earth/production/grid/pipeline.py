@@ -59,7 +59,10 @@ def compare(config, output):
         if (saved["status"] != "complete" or saved["index_id"] != packed["index_id"]
                 or saved["target_set_id"] != target["target_set_id"] or saved.get("ms_ssim_version") != SSIM_VERSION):
             raise ValueError("Reusable scores must share source frames, index and MS-SSIM version")
-        caches.append(saved["experiment_id"])
+        cache_id = saved.get("experiment_id") or saved.get("production_id")
+        if not cache_id:
+            raise ValueError("Reusable scores need a comparison or production identity")
+        caches.append(cache_id)
     begin, end = Fraction(str(config["start"])), Fraction(str(config["start"]))+Fraction(str(config["duration"]))
     targets = [r for r in pq.read_table(run / "targets/targets.parquet").to_pylist()
                if begin <= Fraction(r["source_pts"])*Fraction(r["source_time_base"]) < end]

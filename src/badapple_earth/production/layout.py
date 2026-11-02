@@ -92,7 +92,7 @@ def frame(plan, config):
         draw.rectangle((x - 3, y - 3, x + width + 2, y + height + 2),
                        outline=ACCENT if number == selected else "#36475c", width=2 if number == selected else 1)
         color = ACCENT if number == selected else MUTED
-        draw.text((x, y + height + 9), f"{number+1:02d}", font=font(regular, 15), fill=color)
+        draw.text((x, y + height + 9), f"{candidate['rank']:02d}", font=font(regular, 15), fill=color)
         value = candidate.get("selection_score", candidate["raw_mse"])
         draw.text((x + width, y + height + 7), f"{value:.3f}", anchor="ra", font=font(regular, 18), fill=color)
     x, y, width, height = HERO

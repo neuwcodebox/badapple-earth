@@ -6,7 +6,6 @@ from fractions import Fraction
 import json
 from multiprocessing import get_context
 from pathlib import Path
-import shutil
 import time
 
 import numpy as np
@@ -18,57 +17,10 @@ from ..collection.bundle import read_manifest
 from ..collection.storage import writer_lock
 from ..collection.windows import identity
 from ..evidence import write_json
-from ..matching.views import rotate_image
-from ..matching.photos import read_rgb_rows
-from .assets import old_rgb_refs, save_image
+from .assets import cached_photos
 from .layout import BG, INK, MUTED, font, resized, timestamp
 from .metrics import LABELS, METHODS, VERSION, image_features, scores, winner
 from .render import encoder
-
-
-def cached_photos(run, root, candidates, config, canonical_size):
-    """Materialize only missing views from stored RGB shards; never open a URL."""
-    destination = root / "photos"
-    destination.mkdir(exist_ok=True)
-    missing = {}
-    counts = {"reused_png": 0, "rgb_shard": 0, "remote": 0}
-    for row in candidates:
-        path = destination / f"{row['view_id']}.png"
-        if path.exists():
-            continue
-        existing = run / "assets/thumbs" / path.name
-        if existing.exists():
-            try:
-                path.hardlink_to(existing)
-            except OSError:
-                shutil.copyfile(existing, path)
-            counts["reused_png"] += 1
-        else:
-            missing[row["view_id"]] = row
-    extra = Path(config["extra_rgb_cache"]) if config.get("extra_rgb_cache") else None
-    refs = old_rgb_refs(extra, {r["tile_id"] for r in missing.values() if not r.get("rgb_cache_ref")})
-    from ..collection.bundle import members
-    index_root = Path(config["index"])
-    sources = {manifest["index_id"]: directory
-               for directory, manifest, _ in members(index_root, read_manifest(index_root))}
-    groups = defaultdict(list)
-    for row in missing.values():
-        if row["tile_id"] in refs:
-            path, position = refs[row["tile_id"]]
-        elif row.get("rgb_cache_ref"):
-            path = sources[row["index_member"]] / row["rgb_cache_ref"]
-            position = row["rgb_cache_row"]
-        else:
-            raise ValueError("Top-K comparison requires locally cached RGB for every view")
-        groups[path].append((position, row))
-    for path, jobs in groups.items():
-        array = read_rgb_rows(path, [position for position, _ in jobs])
-        for position, row in jobs:
-            image = Image.fromarray(np.asarray(array[position]))
-            transformed = rotate_image(image, row["rotation_degrees"], canonical_size, row["rotation_crop"])
-            save_image(transformed, destination / f"{row['view_id']}.png")
-            counts["rgb_shard"] += 1
-    return counts
 
 
 def evaluate(jobs):

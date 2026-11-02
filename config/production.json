@@ -2,11 +2,15 @@
   "input": "input/badapple.mp4",
   "index": "data/index/p5-1m",
   "packed_index": "data/packed/p5-1m",
+  "search_grid": "fine",
+  "fine_cache": "data/packed/p5-1m-fine",
   "frame_mode": "all",
   "crop": [0, 0, 1444, 1080],
   "top_k": 20,
+  "rerank_top_k": 20,
   "display_top_k": 5,
   "target_batch": 128,
+  "candidate_batch": 32768,
   "width": 1920,
   "height": 1080,
   "font_regular": ".local/fonts/segoeui.ttf",
@@ -22,5 +26,6 @@
   "extra_rgb_cache": "data/shape-v2/p4-100k",
   "selection_method": "ms-ssim",
   "rerank_workers": 8,
-  "reuse_run": "data/runs/p6-full"
+  "reuse_run": "data/runs/p6-refined",
+  "reuse_scores": ["data/runs/p6-grid32-wide"]
 }
