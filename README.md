@@ -67,6 +67,21 @@ uv run badapple-earth compare-metrics --run data/runs/p6-full --output data/runs
 
 이 실험의 MS-SSIM은 Top-20 전체를 평가하므로 전곡 버전의 다섯 장소 재평가와 후보 범위가 다르다. 지표 간 점수는 단위가 달라 직접 비교할 수 없다. FSIM 포트는 연구·교육 목적 이용 조건을 따르며 [고지](THIRD_PARTY_NOTICES.md)와 [계산 설정](docs/TECH.md#53-점수-조합과-반복-제어)을 참고한다. 전곡의 기본 선택 설정은 이 비교 실행으로 바뀌지 않는다.
 
+### MSE 격자 해상도와 후보 수 높이기
+
+최종 MS-SSIM은 그대로 두고 MSE 검색 격자를 16×12에서 32×24로 높이며, 후보는 격자마다 Top-512까지 넓힌다. 이미 저장한 특징을 사용하므로 새 수집·다운로드 없이 실행한다.
+
+```powershell
+$env:OPENBLAS_NUM_THREADS = '8'
+$env:OMP_NUM_THREADS = '8'
+$env:NUMBA_NUM_THREADS = '8'
+uv run badapple-earth compare-grid --config config/grid.json --output data/runs/p6-grid32-wide
+```
+
+`comparison.mp4` 위쪽은 원본·16×12 Top-20·16×12 Top-512, 아래쪽은 32×24 Top-20·32×24 Top-512·두 Top-512 합집합이다. **모두 동일한 256×191 MS-SSIM으로 최종 선택**한다. 합집합은 중복 view를 제거해 최대 1,024개이며 장소 중복은 최종 표시 단계에서 정리한다. `WIDE`는 설정의 `top_k`(기본 512)를 뜻한다. 사진 아래 점수는 모두 MS-SSIM이다.
+
+`config/grid.json`에서 구간·K·프로세스 수와 재사용할 점수 run을 정한다. 입력·인덱스·MS-SSIM 버전이 같은 출처와 점수만 재사용한다. 새 후보만 실제 RGB 캐시에서 읽고 계산하며, 원본 프레임을 건너뛰지 않는다. 검색·점수 배치가 완료되어 있으면 같은 명령으로 재개한다. `shortlists.parquet`는 두 격자의 원래 순위와 SSE, `evaluations.parquet`는 모든 MS-SSIM 점수, `selected.parquet`는 다섯 조건의 선택, `display-five.parquet`는 합집합 평가 후의 서로 다른 표시 장소를 담는다. 64×48 격자는 이 비교에 포함하지 않는다.
+
 ### 전체 데이터에서 ZNCC·Gradient Correlation으로 찾기
 
 MSE Top-20 밖의 사진도 찾으려면 전체 회전 view에서 다중 해상도 ZNCC와 부호 있는 Gradient Correlation으로 각각 검색하고 합집합을 평가한다. 기본은 경로별 512개와 원래 MSE 20개의 합집합이다. 화면에 보여줄 다섯 장소는 평가가 끝난 뒤 고른다.

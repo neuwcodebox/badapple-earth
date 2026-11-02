@@ -408,6 +408,16 @@ FSIM은 [저자 코드](https://cslinzhang.github.io/home/FSIM/Files/FeatureSIM.
 
 사진은 기존 PNG 또는 RGB shard만 사용한다. 캐시가 없으면 오류로 끝내며 원격 재추출을 하지 않는다. 모든 패널은 같은 canonical 해상도·원색·표시 크기를 사용해 지표와 원본 디테일 차이가 섞이지 않게 한다. 여덟 CPU 프로세스·bounded 특징 캐시·20프레임 체크포인트를 사용한다. 결과에는 모든 후보별 점수·선택·원래 MSE 순위·실제 출처와 PTS를 남긴다. 비교 영상은 무음이며 각 연속 source PTS당 한 프레임을 인코딩한다. 지표별 점수 단위가 달라 서로의 수치를 직접 비교하지 않으며, 이 shortlist 실험은 다른 지표로 100만 장소를 전수 검색한 결과가 아니다.
 
+##### MSE 검색 격자와 후보 폭 비교
+
+`production/grid/`와 `compare-grid`는 최종 MS-SSIM을 256×191·기존 5단계 정의로 고정하고 검색 격자·후보 수만 바꾼다. 16×12와 32×24 각각 Top-512를 전수 검색하며, 16×12/20·16×12/512·32×24/20·32×24/512와 두 Top-512 합집합(최대 1,024 view)을 비교한다. 후보 수는 장소 수가 아닌 회전 view 수다. 표시할 다섯 장소는 전체 후보의 MS-SSIM 평가 이후에 고른다.
+
+32×24는 기존 `gray_fine`과 같은 순서의 약 3.072GB uint8 packing을 재사용한다. 큰 float64 전체 캐시를 만들지 않고 후보 배치만 변환한다. 768차원의 내적 상한 49,939,200은 float32 정수 표현 범위를 넘으므로 `dot_dtype()`의 float64 BLAS를 사용한다. 정수 내적을 복원한 뒤 int32 norm·SSE를 조합한다. 현재 두 격자의 SSE 상한은 int32 안에 있으며 지원 범위를 넘는 격자는 명시적으로 거부한다. 실수 근사 순위로 바꾸거나 float32 소수부 손실을 허용하지 않는다. 동률은 기존 view ID 전역 순서다.
+
+검색은 후보 32,768개를 바깥 루프로, 타깃 최대 128개를 안쪽 배치로 읽는다. 모든 실제 타깃 프레임을 보존하고 두 원래 명암 배열이 모두 같을 때만 계산을 공유한다. 후보 배치별 두 격자의 Top-K·행 주소·다음 offset을 저장한다. 기존 16×12 Top-20의 행 순서가 모두 보존되는지 실제 비교 실행에서 확인한다.
+
+MS-SSIM 전용 정밀 평가기는 새로운 ZNCC·GC·FSIM 점수를 계산하지 않는다. 재사용할 run은 타깃 ID·인덱스 ID·명시적 `ms_ssim_version`이 일치해야 한다. 같은 `slot/dense_row`의 점수만 합치며, 누락된 쌍에 대해서만 로컬 RGB 행을 읽어 후보 pyramid를 만든다. 기존 출처 행도 Arrow에서 필요한 행만 걸러 재사용하고 나머지를 병렬 해석한다. 점수 동률은 해당 격자의 MSE 순위·view ID, 합집합은 32 격자 순위·16 격자 순위·view ID 순이다. 후보 수가 늘면 기존 최고 점수를 잃지 않는 계약을 유지하되 점수 상승을 시각 품질 개선으로 간주하지 않는다.
+
 ##### 독립 ZNCC·Gradient Correlation 검색
 
 `production/correlation/`과 `compare-correlation`은 MSE shortlist 밖의 사진을 찾는 독립 비교 경로다. 전체 회전 view에서 폭 16·32의 평균 제거·단위 L2 명암 벡터를 각각 `1/√2`로 이어 붙인 다중 해상도 ZNCC로 Top-512를 찾는다. 별도 경로는 같은 두 크기의 Gaussian σ1·radius3·reflect 미분에서 부호를 보존한 가로·세로 배열을 각각 평균 제거·단위 L2 정규화한다. 두 축·두 크기의 내적 평균이 Gradient Correlation이다. 축 하나의 분산이 0이면 그 축은 0으로 기여한다. 부호 없는 경계 강도나 자유 위치 대응으로 바꾸지 않는다. [OpenCV ZNCC 정의](https://docs.opencv.org/4.x/df/dfb/group__imgproc__object.html)와 [GC의 두 축 NCC 평균 정의](https://pmc.ncbi.nlm.nih.gov/articles/PMC4640192/)를 참고하며, 이 문제에서의 우월성은 가정하지 않는다.

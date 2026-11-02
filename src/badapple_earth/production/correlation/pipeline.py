@@ -22,6 +22,7 @@ from ..assets import old_rgb_refs
 from ..comparison import cached_photos, grid_frame
 from ..render import encoder
 from ..search import resolve
+from ..rerank import VERSION as SSIM_VERSION
 from .features import VERSION
 from .rerank import choose, display_five, score_groups
 from .search import search
@@ -152,6 +153,7 @@ def compare(config, output):
             if saved["status"] == "complete" and (root / "comparison.mp4").exists():
                 return saved
         manifest = {"experiment_id": experiment_id, "status": "running", "config": config,
+                    "ms_ssim_version": SSIM_VERSION,
                     "feature_version": VERSION, "pipeline_version": PIPELINE_VERSION,
                     "target_set_id": target_manifest["target_set_id"], "index_id": packed_manifest["index_id"],
                     "source_frames": len(targets), "first_slot": targets[0]["slot"], "last_slot": targets[-1]["slot"],

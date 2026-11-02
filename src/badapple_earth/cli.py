@@ -85,6 +85,9 @@ def main() -> int:
     correlation = commands.add_parser("compare-correlation", help="Search all views by multiscale ZNCC/gradient and compare wide reranking")
     correlation.add_argument("--config", type=Path, default=Path("config/correlation.json"))
     correlation.add_argument("--output", type=Path, required=True)
+    grid = commands.add_parser("compare-grid", help="Compare exact MSE grids and wider candidates with fixed MS-SSIM selection")
+    grid.add_argument("--config", type=Path, default=Path("config/grid.json"))
+    grid.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "probe":
@@ -142,6 +145,10 @@ def main() -> int:
             from .production.correlation.pipeline import compare
             result = compare(json.loads(args.config.read_text(encoding="utf-8")), args.output)
             print(f"Wide correlation comparison {result['status']}: {result['source_frames']} original frames; {args.output}")
+        elif args.command == "compare-grid":
+            from .production.grid.pipeline import compare
+            result = compare(json.loads(args.config.read_text(encoding="utf-8")), args.output)
+            print(f"MSE grid comparison {result['status']}: {result['source_frames']} original frames; {args.output}")
         elif args.command == "shape-index":
             from .shape.index import build
             result = build(args.index, args.output, args.workers)

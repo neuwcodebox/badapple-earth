@@ -1,0 +1,13 @@
+{
+  "run": "data/runs/p6-full",
+  "baseline": "data/runs/p6-metrics-top20",
+  "packed_index": "data/packed/p5-1m",
+  "fine_cache": "data/packed/p5-1m-fine",
+  "reuse_scores": ["data/runs/p6-correlation"],
+  "start": 38,
+  "duration": 10,
+  "top_k": 512,
+  "candidate_batch": 32768,
+  "target_batch": 128,
+  "workers": 8
+}
