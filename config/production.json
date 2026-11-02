@@ -1,0 +1,23 @@
+{
+  "input": "input/badapple.mp4",
+  "index": "data/index/p5-1m",
+  "packed_index": "data/packed/p5-1m",
+  "frame_mode": "all",
+  "crop": [0, 0, 1444, 1080],
+  "top_k": 20,
+  "display_top_k": 5,
+  "target_batch": 128,
+  "width": 1920,
+  "height": 1080,
+  "font_regular": ".local/fonts/segoeui.ttf",
+  "font_bold": ".local/fonts/segoeuib.ttf",
+  "asset_workers": 4,
+  "render_workers": 2,
+  "segment_frames": 180,
+  "encoder_threads": 2,
+  "crf": 18,
+  "preset": "medium",
+  "audio_mode": "source_local",
+  "high_resolution_selected": true,
+  "extra_rgb_cache": "data/shape-v2/p4-100k"
+}

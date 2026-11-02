@@ -21,6 +21,8 @@ def prefer_previous(previous_time, current_time, target_time):
 
 
 def targets(config: dict, output: Path):
+    if config.get("frame_mode") == "all":
+        return all_targets(config, output)
     source = Path(config["input"])
     if not source.is_file():
         raise ValueError("Input MP4 does not exist")
@@ -93,4 +95,77 @@ def targets(config: dict, output: Path):
                 "canonical_size": list(image_size(256, aspect)), "count": len(rows), "stream": stream_info}
     write_json(output / "manifest.json", manifest)
     contact_sheet([(output / row["frame"], f"{row['target_time']:.3f}s") for row in rows], output / "contact-sheet.jpg")
+    return manifest
+
+
+def all_targets(config: dict, output: Path):
+    """Keep every decoded frame, with its original presentation timestamp."""
+    source = Path(config["input"])
+    if not source.is_file():
+        raise ValueError("Input MP4 does not exist")
+    fingerprint = checksum(source)
+    target_set_id = identity([fingerprint, config, FEATURE_VERSION])
+    manifest_path = output / "manifest.json"
+    if manifest_path.exists():
+        saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if saved["target_set_id"] != target_set_id:
+            raise ValueError("All-frame targets belong to another input/configuration")
+        return saved
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "frames").mkdir(exist_ok=True)
+    left, top, width, height = config["crop"]
+    aspect = [width, height]
+    rows, coarse_values, fine_values = [], [], []
+    with av.open(str(source)) as container:
+        stream = container.streams.video[0]
+        origin = (stream.start_time or 0) * stream.time_base
+        if stream.sample_aspect_ratio not in (None, Fraction(1)) or float(stream.metadata.get("rotate", 0)):
+            raise ValueError("All-frame production requires an oriented square-pixel input")
+        if left < 0 or top < 0 or left + width > stream.width or top + height > stream.height:
+            raise ValueError("Crop is outside the decoded image")
+        previous = None
+        step = None
+        for slot, frame in enumerate(container.decode(stream)):
+            if frame.pts is None:
+                raise ValueError("Decoded source frame has no PTS")
+            timestamp = frame.pts * frame.time_base - origin
+            if previous is not None:
+                delta = timestamp - previous
+                step = delta if step is None else step
+                if delta <= 0 or delta != step:
+                    raise ValueError("This all-frame encoder requires a constant PTS interval")
+            image = frame.to_image().convert("RGB").crop((left, top, left + width, top + height))
+            image = image.resize(image_size(256, aspect), Image.Resampling.BOX)
+            coarse, fine, _ = extract(image, aspect)
+            filename = f"frames/{slot:06d}.png"
+            image.save(output / filename)
+            rows.append({"target_id": identity([target_set_id, slot]), "slot": slot,
+                         "target_time": float(timestamp), "source_pts": frame.pts,
+                         "source_time_base": str(frame.time_base), "selected_source_time": float(frame.pts * frame.time_base),
+                         "frame": filename})
+            coarse_values.append(coarse)
+            fine_values.append(fine)
+            previous = timestamp
+        if not rows or step is None:
+            raise ValueError("All-frame production needs at least two source frames")
+        declared = stream.frames
+        if declared and declared != len(rows):
+            raise ValueError("Decoded frame count differs from the source declaration")
+        stream_info = {"time_base": str(stream.time_base), "start_time": float(origin),
+                       "average_rate": str(stream.average_rate), "width": stream.width, "height": stream.height,
+                       "has_audio": bool(container.streams.audio), "declared_frames": declared}
+    np.save(output / "gray_coarse.npy", np.stack(coarse_values), allow_pickle=False)
+    np.save(output / "gray_fine.npy", np.stack(fine_values), allow_pickle=False)
+    pq.write_table(pa.Table.from_pylist(rows), output / "targets.parquet")
+    manifest = {"target_set_id": target_set_id, "input_sha256": fingerprint, "input_name": source.name,
+                "config": {key: value for key, value in config.items() if key != "input"},
+                "feature_version": FEATURE_VERSION, "aspect_ratio": aspect,
+                "canonical_size": list(image_size(256, aspect)), "count": len(rows), "stream": stream_info,
+                "frame_mode": "all", "frame_rate": str(1 / step), "duration_seconds": float(len(rows) * step),
+                "frame_mapping": "one output frame per decoded source frame, original PTS order"}
+    write_json(manifest_path, manifest)
+    sample = np.linspace(0, len(rows) - 1, min(40, len(rows)), dtype=int)
+    contact_sheet([(output / rows[i]["frame"], f"{rows[i]['target_time']:.3f}s / frame {i}") for i in sample],
+                  output / "contact-sheet.jpg")
+    print(f"All source frames: {len(rows):,}, {manifest['frame_rate']} fps", flush=True)
     return manifest

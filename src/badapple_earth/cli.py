@@ -72,6 +72,9 @@ def main() -> int:
     shape_render.add_argument("--index", required=True, type=Path)
     shape_render.add_argument("--run", required=True, type=Path)
     shape_render.add_argument("--baseline", type=Path)
+    production = commands.add_parser("produce", help="Use every source frame and render the complete 16:9 search presentation")
+    production.add_argument("--config", type=Path, default=Path("config/production.json"))
+    production.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "probe":
@@ -117,6 +120,10 @@ def main() -> int:
             from .matching.output import render
             render(args.targets, args.run)
             print(f"Rendered color.mp4, gray.mp4, comparison.mp4: {args.run}")
+        elif args.command == "produce":
+            from .production.pipeline import produce
+            result = produce(json.loads(args.config.read_text(encoding="utf-8")), args.output)
+            print(f"Production {result['status']}: {result['source_frames']} original frames; {args.output}")
         elif args.command == "shape-index":
             from .shape.index import build
             result = build(args.index, args.output, args.workers)
