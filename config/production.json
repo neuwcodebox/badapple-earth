@@ -15,7 +15,7 @@
   "height": 1080,
   "font_regular": ".local/fonts/segoeui.ttf",
   "font_bold": ".local/fonts/segoeuib.ttf",
-  "asset_workers": 4,
+  "asset_workers": 8,
   "render_workers": 2,
   "segment_frames": 180,
   "encoder_threads": 2,
@@ -24,8 +24,9 @@
   "audio_mode": "source_local",
   "high_resolution_selected": true,
   "extra_rgb_cache": "data/shape-v2/p4-100k",
-  "selection_method": "ms-ssim",
+  "selection_method": "astra",
+  "visual_run": "data/reviews/astra-sequential-full",
+  "visual_experiment_id": "38998e8e0aaac0c444e7a07051e6c4091001adcd07817bf22bdda2d2afe09cad",
   "rerank_workers": 8,
-  "reuse_run": "data/runs/p6-refined",
-  "reuse_scores": ["data/runs/p6-grid32-wide"]
+  "reuse_run": "data/runs/p6-grid32-full"
 }

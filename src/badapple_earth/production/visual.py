@@ -4,8 +4,10 @@ import argparse
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+from functools import lru_cache
 import json
 from pathlib import Path
+import shutil
 import time
 
 import numpy as np
@@ -36,6 +38,12 @@ def assignments(slots, seed, workers, mode="independent"):
     return [chunk.tolist() for chunk in np.array_split(shuffled, workers)]
 
 
+@lru_cache(maxsize=512)
+def sheet_photo(path):
+    with Image.open(path) as image:
+        return image.convert("RGB")
+
+
 def comparison_sheet(case, root, regular, bold):
     canvas = Image.new("RGB", (1392, 1128), BG)
     draw = ImageDraw.Draw(canvas)
@@ -44,8 +52,7 @@ def comparison_sheet(case, root, regular, bold):
         canvas.paste(image.convert("RGB"), (16, 32))
     for i, entry in enumerate(case["entries"]):
         x, y = 16 + i % 5 * 272, 240 + i // 5 * 218
-        with Image.open(root / "photos" / f"{entry['view_id']}.png") as image:
-            canvas.paste(image.convert("RGB"), (x, y))
+        canvas.paste(sheet_photo(root / "photos" / f"{entry['view_id']}.png"), (x, y))
         label = entry["id"]
         if "photo_id" in entry:
             label += " / " + entry["photo_id"]
@@ -57,6 +64,8 @@ def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3, mode
     started = time.perf_counter()
     run, root = run.resolve(), root.resolve()
     source, target = read_manifest(run), read_manifest(run / "targets")
+    if duration is None:
+        duration = target["duration_seconds"] - start
     if start < 0 or duration <= 0 or start + duration > target["duration_seconds"] + 1e-6:
         raise ValueError("Interval must lie inside the original video")
     targets = [r for r in pq.read_table(run / "targets/targets.parquet").to_pylist()
@@ -67,9 +76,7 @@ def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3, mode
     groups = assignments([r["slot"] for r in targets], seed, workers, mode)
     version = SEQUENTIAL_VERSION if mode == "sequential" else VERSION
     settings = [version, source["production_id"], [r["slot"] for r in targets], seed, workers]
-    if mode == "sequential":
-        if independent_run is None:
-            raise ValueError("Independent comparison run is required")
+    if mode == "sequential" and independent_run is not None:
         independent_run = independent_run.resolve()
         independent = read_manifest(independent_run)
         if (independent["status"] != "complete" or independent["target_set_id"] != source["target_set_id"]
@@ -85,6 +92,9 @@ def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3, mode
     root.mkdir(parents=True, exist_ok=True)
     for directory in ("sheets", "jobs", "choices"):
         (root / directory).mkdir(exist_ok=True)
+    instructions = Path("config/astra-reviewer.txt")
+    if instructions.exists() and not (root / "reviewer-instructions.txt").exists():
+        shutil.copyfile(instructions, root / "reviewer-instructions.txt")
     inverse = np.load(run / "search/query_inverse.npy", allow_pickle=False)
     queries = sorted({int(inverse[r["slot"]]) for r in targets})
     matches = pq.read_table(run / "search/matches.parquet", filters=[("query", "in", queries), ("rank", "<=", 20)]).to_pylist()
@@ -122,8 +132,19 @@ def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3, mode
         jobs.append(job["job_id"])
     regular = font(source["config"]["font_regular"], 18)
     bold = font(source["config"]["font_bold"], 20)
+    stops = {job["cases"][-1]["case_id"]: job["job_id"] for job in
+             [json.loads((root / "jobs" / f"{name}.json").read_text(encoding="utf-8")) for name in jobs]}
+    def make_sheet(case):
+        destination = root / "sheets" / f"{case['case_id']}.png"
+        if not destination.exists():
+            comparison_sheet(case, root, regular, bold)
+        return case["case_id"]
     with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda case: comparison_sheet(case, root, regular, bold), cases))
+        for case_id in pool.map(make_sheet, cases):
+            if case_id in stops:
+                (root / "jobs" / f"{stops[case_id]}.ready").touch()
+                print(f"Job ready: {stops[case_id]}", flush=True)
+    sheet_photo.cache_clear()
     write_json(root / "private-map.json", {"experiment_id": experiment_id, "cases": cases})
     manifest = {"experiment_id": experiment_id, "version": version, "mode": mode, "status": "awaiting_choices",
                 "source_run": str(run), "target_set_id": source["target_set_id"], "index_id": source["index_id"],
@@ -173,11 +194,9 @@ def transition_counts(rows):
             "longest_hold_frames": max(runs, default=0)}
 
 
-def render(root):
+def collect(root):
     root = root.resolve()
     manifest = read_manifest(root)
-    if manifest["status"] == "complete":
-        return manifest
     cases = json.loads((root / "private-map.json").read_text(encoding="utf-8"))["cases"]
     choices = read_choices(root, cases, manifest["jobs"])
     cases.sort(key=lambda r: r["slot"])
@@ -192,13 +211,30 @@ def render(root):
                         "target_time": case["target_time"], "selection_method": "astra-" + manifest.get("mode", "independent"),
                         "ms_ssim_view_id": ms[case["slot"]]["view_id"]})
     pq.write_table(pa.Table.from_pylist(records), root / "selected.parquet")
+    manifest.update(status="selected", reviewer="gpt-6-astra", reasoning_effort="low",
+                    different_from_ms_ssim=sum(r["view_id"] != r["ms_ssim_view_id"] for r in records),
+                    different_from_mse=sum(r["rank"] != 1 for r in records),
+                    transitions={"astra": transition_counts(records),
+                                 "ms_ssim": transition_counts([ms[c["slot"]] for c in cases])})
+    write_json(root / "manifest.json", manifest)
+    return manifest, cases, records, ms
+
+
+def render(root):
+    root = root.resolve()
+    manifest = read_manifest(root)
+    if manifest["status"] == "complete":
+        return manifest
+    manifest, cases, records, ms = collect(root)
+    run = Path(manifest["source_run"])
+    source = read_manifest(run)
     started = time.perf_counter()
     config = {**source["config"], "encoder_threads": 4}
     regular = font(config["font_regular"], 16)
     bold = font(config["font_bold"], 21)
     temporary = root / "comparison.tmp.mp4"
     independent = None
-    if manifest.get("mode") == "sequential":
+    if manifest.get("independent_run"):
         baseline = Path(manifest["independent_run"])
         independent = {r["slot"]: r for r in pq.read_table(baseline / "selected.parquet").to_pylist()}
     with (root / "encode.log").open("wb") as log:
@@ -256,20 +292,22 @@ def render(root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("prepare", "render"))
+    parser.add_argument("stage", choices=("prepare", "collect", "render"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--run", type=Path, default=Path("data/runs/p6-grid32-full"))
     parser.add_argument("--start", type=float, default=38)
     parser.add_argument("--duration", type=float, default=10)
+    parser.add_argument("--all-frames", action="store_true")
     parser.add_argument("--seed", type=int, default=20261103)
     parser.add_argument("--workers", type=int, default=3)
     parser.add_argument("--mode", choices=("independent", "sequential"), default="independent")
     parser.add_argument("--independent-run", type=Path)
     args = parser.parse_args()
     if args.stage == "prepare":
-        if args.mode == "sequential" and args.independent_run is None:
-            parser.error("--independent-run is required for sequential comparison")
-        result = prepare(args.run, args.output, args.start, args.duration, args.seed, args.workers, args.mode, args.independent_run)
+        result = prepare(args.run, args.output, 0 if args.all_frames else args.start,
+                         None if args.all_frames else args.duration, args.seed, args.workers, args.mode, args.independent_run)
+    elif args.stage == "collect":
+        result = collect(args.output)[0]
     else:
         result = render(args.output)
     print(json.dumps(result, ensure_ascii=False, indent=2))

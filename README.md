@@ -2,7 +2,7 @@
 
 Bad Apple!!의 각 프레임과 형태·명암이 닮은 **실제 위성·항공사진 한 장**을 찾아 영상을 재구성하는 로컬 제작 도구다. 그림을 새로 생성하거나 여러 장소를 합성하지 않고, 실제 지구에서 촬영된 장면 자체를 검색한다.
 
-> **기본 제작은 모든 원본 프레임의 32×24 MSE Top-20 검색과 20개 전체의 MS-SSIM 재평가다.** 최종 선택 뒤에 서로 다른 표시 장소 다섯 개를 고른다. 16:9 화면에는 작은 원본·후보 다섯 장·선택 연결선·큰 사진을 배치한다. 시간·프레임·실제 MSE 순위·점수는 작게 정돈하고 좌표·촬영일을 한 줄로 표시한다. 100만 장소·400만 회전 view와 기존 영상 캐시를 재사용한다. 실제 실행·재생 평가 상태는 [PLAN](docs/PLAN.md)에서 관리한다.
+> **기본 제작은 모든 원본 프레임의 32×24 MSE Top-20에서 Astra가 시간적 맥락을 고려해 한 장을 선택하는 방식이다.** 연속 구간을 최대 25개 서브에이전트에 병렬 배정한다. 16:9 화면에는 작은 원본·후보 다섯 장·선택 연결선·큰 사진을 배치한다. 시간·프레임·실제 MSE 순위와 참고용 MS-SSIM 점수는 작게 정돈하고 좌표·촬영일을 한 줄로 표시한다. 실제 실행·재생 평가 상태는 [PLAN](docs/PLAN.md)에서 관리한다.
 
 ## 주요 기능과 목표
 
@@ -34,20 +34,22 @@ uv run pytest -q --basetemp .local/pytest
 
 ### 전곡과 16:9 최종 영상
 
-로컬 MP4와 수집한 `data/index/p5-1m/`가 있으면 다음 명령으로 모든 프레임을 처리한다.
+로컬 MP4·100만 후보·완료된 Astra 전곡 선택이 있으면 다음 명령으로 모든 프레임을 제작한다. 모델 선택을 준비하는 절차는 아래의 “Astra로 같은 후보에서 선택하기”를 따른다.
 
 ```powershell
 $env:OPENBLAS_NUM_THREADS = '8'
 $env:OMP_NUM_THREADS = '8'
 $env:NUMBA_NUM_THREADS = '8'
-uv run badapple-earth produce --config config/production.json --output data/runs/p6-grid32-full
+uv run badapple-earth produce --config config/production.json --output data/runs/p6-astra-full
 ```
 
 같은 명령으로 packing·검색·사진 준비·완료 인코딩 segment를 재사용하며 이어간다. `config/production.json`에서 입력·인덱스·로컬 글꼴·인코딩 작업 수·오디오를 조정한다. 기본 글꼴 캐시가 없으면 Windows Segoe UI 또는 사용 가능한 DejaVu Sans를 찾고, 없으면 직접 지정한다. 글꼴 파일은 Git에 포함하지 않는다.
 
-최종 출력은 `final-16x9.mp4`(1920×1080), `satellite-full.mp4`(원래 콘텐츠 비율의 사진 전용), `preview.png`, 전 프레임 `selected.parquet`·`frame-plan.parquet`, 전체 Top-20의 `search/matches.parquet`, `credits.json`이다. MS-SSIM 최종 선택과 MSE 상위의 다른 네 장소를 실제 MSE 순서대로 표시하고 선택 위치를 강조한다. 같은 장소의 다른 방향이 먼저 검색되어도 선택된 방향을 표시한다. 숫자는 표시 행 번호가 아닌 원래 Top-20의 MSE 순위다. 타이틀·슬로건은 표시하지 않으며 시간·프레임 카운터·후보 점수와 사진 아래 좌표·촬영일만 간결하게 보여준다.
+최종 출력은 `final-16x9.mp4`(1920×1080), `satellite-full.mp4`(원래 콘텐츠 비율의 사진 전용), `preview.png`, 전 프레임 `selected.parquet`·`frame-plan.parquet`, 전체 Top-20의 `search/matches.parquet`, `credits.json`이다. Astra 선택과 MSE 상위의 다른 네 장소를 실제 MSE 순서대로 표시하고 선택 위치를 강조한다. 같은 장소의 다른 방향이 먼저 검색되어도 선택된 방향을 표시한다. 순위 숫자는 표시 행 번호가 아닌 원래 Top-20의 MSE 순위다. 표시된 MS-SSIM은 형태 대응의 참고 수치이며 Astra의 점수나 선택 기준을 수치화한 것이 아니다. 타이틀·슬로건은 표시하지 않는다.
 
-`search_grid: "fine"`는 32×24, `coarse`는 비교용 16×12다. `selection_method`는 `ms-ssim` 또는 비교용 `mse`다. 기본 `rerank_top_k: 20`은 장소·회전을 먼저 줄이지 않고 20개 view를 모두 평가하며 동률은 MSE 순서다. `display_top_k: 5`는 평가 이후의 표시 수다. 기본 `reuse_run`은 앞서 완성한 `data/runs/p6-refined`의 타깃·사진을 재사용하되 격자가 다른 검색은 복사하지 않는다. `reuse_scores`는 같은 타깃·인덱스·MS-SSIM 버전의 이전 점수 run이다. 이 산출물이 없는 환경에서는 두 재사용 설정을 지우고 실행한다. `evaluations.parquet`·`scores/`에는 모든 프레임×후보의 MS-SSIM과 재개 상태가 남는다. 새 방법의 작품성은 실제 영상을 비교해 판단한다.
+`search_grid: "fine"`는 32×24, `coarse`는 비교용 16×12다. `selection_method: "astra"`는 `visual_run`의 완료 선택과 `visual_experiment_id`를 사용한다. `rerank_top_k: 20`은 모델이 본 후보 수, `display_top_k: 5`는 선택 이후의 표시 수다. 기본 `reuse_run`은 `data/runs/p6-grid32-full`의 타깃·검색·사진을 재사용하며 참고용 MS-SSIM도 이 run의 저장 점수에서 읽는다. 같은 격자·K의 검색과 버전이 맞는 캐시만 재사용한다. 선택 JSONL·시트·프레임별 출처는 `visual_run`에 보존하며 모델 판단을 seed만으로 재현한다고 가정하지 않는다.
+
+기존 MS-SSIM 최댓값 선택 전곡은 `config/production-ms-ssim.json`과 `data/runs/p6-grid32-full`에 보존한다. `selection_method: "ms-ssim"`과 `"mse"`도 비교용으로 지원한다.
 
 6,955개 원본 프레임을 모두 쓰고 30000/1001fps를 유지한다. 동일한 검색 특징은 계산만 공유하며 출력 프레임을 생략하거나 보간하지 않는다. 원본 AAC는 로컬 영상에 전체 복사하고, `audio_mode: "silent"`는 무음으로 만든다. 입력에 있는 약 65ms의 오디오 꼬리 때문에 영상 프레임을 추가하지 않는다. 이 경로는 현재 CFR·SAR 1:1 입력을 지원하며 외부 업로드는 하지 않는다.
 
@@ -87,7 +89,7 @@ uv run python -m badapple_earth.production.visual prepare --run data/runs/p6-gri
 uv run python -m badapple_earth.production.visual render --output data/reviews/astra-selection-300
 ```
 
-모든 선택이 채워지면 `comparison.mp4`에 원본·MSE·MS-SSIM·Astra를 같은 canonical 크기와 원본 프레임 순서로 표시한다. `selected.parquet`에는 선택 사진의 출처·회전·source PTS가 남는다. 비교는 무음이며 기본 전곡 설정은 바꾸지 않는다.
+모든 선택이 채워지면 `comparison.mp4`에 원본·MSE·MS-SSIM·Astra를 같은 canonical 크기와 원본 프레임 순서로 표시한다. `selected.parquet`에는 선택 사진의 출처·회전·source PTS가 남는다. 비교는 무음이다.
 
 인접 프레임의 선택도 고려하는 비교는 `--mode sequential`을 사용한다. 연속 100프레임씩 세 에이전트가 병렬 처리하며 각 job의 `context`는 앞 구간 마지막 10프레임의 참고 시트다. 참고 프레임의 선택은 저장하지 않는다. 고정 `V` ID로 같은 사진을 추적하며 형태 대응이 비슷하면 직전 사진을 유지하되 실제 원본 변화에는 따라가도록 지시한다. 후보 20개와 사진 자체는 독립 비교와 동일하다.
 
@@ -97,6 +99,17 @@ uv run python -m badapple_earth.production.visual render --output data/reviews/a
 ```
 
 연속 모드의 비교 패널은 원본·독립 Astra·MS-SSIM·연속 Astra다. 각 에이전트는 자기 구간의 직전 선택을 고려하며 구간 사이의 실제 선택은 공유하지 않는다.
+
+전곡은 독립 비교 run 없이 준비하고 25개 job을 같은 수의 Astra 서브에이전트에 맡긴다. 시트가 준비된 job부터 시작할 수 있도록 `jobs/review-*.ready`를 기록한다. 작업 지침은 `config/astra-reviewer.txt`에서 출력 폴더로 복사한다. 약 278~279프레임의 연속 구간마다 앞 10프레임의 참고 맥락이 있으며, 모든 대상 프레임을 실제로 보고 선택하도록 한다.
+
+```powershell
+uv run python -m badapple_earth.production.visual prepare --run data/runs/p6-grid32-full --output data/reviews/astra-sequential-full --mode sequential --workers 25 --all-frames
+# 각 job을 Astra 서브에이전트에 맡겨 choices/*.jsonl을 저장한 뒤:
+uv run python -m badapple_earth.production.visual collect --output data/reviews/astra-sequential-full
+uv run badapple-earth produce --config config/production.json --output data/runs/p6-astra-full
+```
+
+`collect`는 전체 선택을 원본 순서의 Parquet로 연결한다. `produce`는 같은 검색의 실제 후보에 속하는 모델 선택을 그대로 사용하며 MS-SSIM 최대 후보로 다시 고르지 않는다. 출력 경로나 실험을 바꾸면 `visual_run`과 `visual_experiment_id`도 함께 지정한다.
 
 ### MSE 격자 해상도와 후보 수 높이기
 

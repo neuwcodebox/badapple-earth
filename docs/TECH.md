@@ -400,7 +400,7 @@ FAISS는 초기 필수 의존성이 아니다. 반복 검색이 병목으로 확
 
 `production/rerank.py`는 256×191 grayscale에서 5단계 MS-SSIM을 계산한다. Gaussian 11×11·σ1.5, K1=.01·K2=.03, 2×2 평균 다운샘플과 홀수 경계 reflect padding, 원 논문의 가중치 `.0448/.2856/.3001/.2363/.1333`을 사용한다. 각 단계의 유효 창에서 평균 contrast/structure를 구하고 마지막 단계에 luminance를 포함해 곱한다. 음수 분수 거듭제곱을 피하도록 단계 평균은 [1e-8,1]로 제한한다. [MS-SSIM 원 논문](https://ece.uwaterloo.ca/~z70wang/publications/msssim.html)과 [SSIM 저자 설명](https://www.cns.nyu.edu/~lcv/ssim/)을 참고한다.
 
-각 실제 source frame의 full canonical grayscale을 평가한다. 검색 특징이 같아 MSE 계산을 공유해도 미세한 명암 구조가 다를 수 있으므로 재평가는 source frame별이다. 20개 전체의 점수 최대를 선택하고 동률이면 MSE 순위·view ID 순서를 따른다. `grid/rerank.py`의 RGB shard별 여덟 프로세스·bounded 타깃 통계 캐시·버전이 맞는 기존 점수·완료 Parquet 배치를 재사용한다. PNG는 최종 선택과 다른 네 장소의 표시가 정해진 뒤 필요한 것만 준비한다. 같은 장소의 다른 회전이 더 앞에 있어도 최종 선택의 방향을 보여주며, 다섯 장소를 원래 MSE 순위로 정렬한다. 표시 순번과 원래 검색 순위를 혼동하지 않도록 숫자는 검색 순위를 사용한다. 점수가 높다는 사실만으로 재생 품질 개선을 판정하지 않는다.
+MS-SSIM 비교용 제작은 각 실제 source frame의 full canonical grayscale을 평가한다. 검색 특징이 같아 MSE 계산을 공유해도 미세한 명암 구조가 다를 수 있으므로 재평가는 source frame별이다. 20개 전체의 점수 최대를 선택하고 동률이면 MSE 순위·view ID 순서를 따른다. `grid/rerank.py`의 RGB shard별 여덟 프로세스·bounded 타깃 통계 캐시·버전이 맞는 기존 점수·완료 Parquet 배치를 재사용한다. PNG는 최종 선택과 다른 네 장소의 표시가 정해진 뒤 필요한 것만 준비한다. 같은 장소의 다른 회전이 더 앞에 있어도 최종 선택의 방향을 보여주며, 다섯 장소를 원래 MSE 순위로 정렬한다. 표시 순번과 원래 검색 순위를 혼동하지 않도록 숫자는 검색 순위를 사용한다. 점수가 높다는 사실만으로 재생 품질 개선을 판정하지 않는다.
 
 기본 전곡의 `grid/search.production_search()`는 fine 배열만 사용하는 단일 검색 경로다. 같은 fine 원배열의 검색 계산만 공유하고 `query_inverse.npy`로 모든 원본 프레임을 복원한다. 기본 주소/ID packing과 같은 행 순서의 uint8 fine cache를 사용하며 float64 변환은 현재 배치에만 한다. 격자 또는 K가 다른 `reuse_run`에서는 타깃·사진만 재사용하고 검색은 복사하지 않는다. 새로운 선택에서 큰 표시 크기에 필요한 원본 픽셀만 추가 읽으며 이미 있는 native PNG는 재사용한다. 이전 16 격자·다섯 장소 전곡은 완료 비교 산출물로 보존한다.
 
@@ -424,9 +424,11 @@ FSIM은 [저자 코드](https://cslinzhang.github.io/home/FSIM/Files/FeatureSIM.
 
 각 프레임 후보는 별도 seed로 섞는다. 원본 256×191과 후보 20장을 한 시트에 넣으며 공개 job에는 가림 case ID·시트 경로·결과 경로와 연속 모드의 참고 프레임만 제공한다. 연속 모드의 후보에는 exact view마다 고정된 `V` ID도 표시해 local `P` ID가 바뀌어도 같은 사진을 추적한다. 실제 source slot·PTS·후보 view·출처·순위는 `private-map.json`에 보관한다. 독립 모드의 무작위 배정은 인접 장면의 영향을 줄이지만 모델 판단의 완전한 독립성을 보장하지 않는다.
 
-Astra 서브에이전트는 `low` reasoning으로 준비된 시트를 묶어 보고 case별 `candidate_id`를 JSONL에 저장한다. 연속 모드는 직전의 고정 photo ID를 기억하고, 형태 대응이 비슷하면 같은 사진이나 명암·색·배치가 가까운 사진을 우선한다. 원본이 실제로 변하거나 형태 대응이 나빠지면 즉시 바꾸며 이전 사진이 현재 Top-20 밖이면 억지로 유지하지 않는다. 후보 점수 계산·추가 조사·장황한 근거는 맡기지 않는다. 완료한 묶음은 즉시 저장하며 재개 시 이미 판단한 시트를 다시 보지 않는다. 100프레임씩 세 에이전트의 병렬 선택이 현재 실험 구성이다. API 유료 호출은 사용하지 않는다.
+Astra 서브에이전트는 `low` reasoning으로 준비된 시트를 묶어 보고 case별 `candidate_id`를 JSONL에 저장한다. 연속 모드는 직전의 고정 photo ID를 기억하고, 형태 대응이 비슷하면 같은 사진이나 명암·색·배치가 가까운 사진을 우선한다. 원본이 실제로 변하거나 형태 대응이 나빠지면 즉시 바꾸며 이전 사진이 현재 Top-20 밖이면 억지로 유지하지 않는다. 후보 점수 계산·추가 조사·장황한 근거는 맡기지 않는다. 완료한 묶음은 즉시 저장하며 재개 시 이미 판단한 시트를 다시 보지 않는다. 전곡은 약 278~279프레임씩 최대 25개 에이전트에 병렬 배정한다. 시트 준비는 decoded RGB의 bounded 캐시와 네 스레드를 사용하고 준비된 job부터 `.ready`로 공개한다. 지침은 `config/astra-reviewer.txt`로 보존하며 API 유료 호출은 사용하지 않는다.
 
 `render`는 저장된 case별 선택이 해당 job과 제시 후보에 속하며 대상 전체가 채워졌는지만 확인한다. 누락 시 임의 선택으로 대체하지 않는다. 원래 PTS 순서의 `selected.parquet`와 무음 비교 영상을 만든다. 독립 모드의 패널은 원본·MSE·MS-SSIM·Astra이고, 연속 모드는 원본·독립 Astra·MS-SSIM·연속 Astra다. 네 패널의 사진은 같은 canonical RGB이며 선택에 맞춰 색상·광도·마스크를 조작하지 않는다. 기존 검색·MS-SSIM은 재계산하지 않는다. 모델 판단은 seed만으로 재현되지 않으므로 원본 시트와 실제 선택 파일을 보관한다.
+
+기본 전곡은 `--all-frames --mode sequential --workers 25`로 준비하고 `collect`로 선택을 원본 순서에 연결한다. 전곡에는 독립 비교 run이 필요 없다. `selection_method: astra`의 제작기는 `visual_run`·`visual_experiment_id`·target/index/search ID와 실제 source slot별 후보 소속을 입력 계약으로 사용한다. 가져온 모델 선택을 MS-SSIM 최대 후보로 바꾸지 않는다. 표시할 후보 점수는 원래 제작 run의 저장된 MS-SSIM을 참고값으로만 읽고 `score_role: reference`로 기록한다. 후보·선택 사진은 시트의 실제 PNG와 이전 native PNG를 재사용하며 큰 표시의 누락된 원본 디테일만 읽는다. `config/production-ms-ssim.json`은 이전 MS-SSIM 전곡의 비교용 설정을 보존한다.
 
 ##### MSE 검색 격자와 후보 폭 비교
 

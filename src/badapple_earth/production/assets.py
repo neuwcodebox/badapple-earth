@@ -97,6 +97,8 @@ def cached_photos(run, root, candidates, config, canonical_size, relative_folder
         if path.exists():
             continue
         existing = run / "assets/thumbs" / path.name
+        if not existing.exists():
+            existing = run / "photos" / path.name
         if existing.exists():
             try:
                 path.hardlink_to(existing)
@@ -129,6 +131,37 @@ def cached_photos(run, root, candidates, config, canonical_size, relative_folder
             save_image(transformed, destination / f"{row['view_id']}.png")
             counts["rgb_shard"] += 1
     return counts
+
+
+def astra_choices(root, config, targets, inverse, top):
+    """Import actual model choices and existing SSIM reference scores, without reranking."""
+    visual_root = Path(config["visual_run"])
+    visual = read_manifest(visual_root)
+    target, search = read_manifest(root / "targets"), read_manifest(root / "search")
+    if (visual["status"] not in {"selected", "complete"}
+            or visual["experiment_id"] != config["visual_experiment_id"]
+            or visual["target_set_id"] != target["target_set_id"] or visual["index_id"] != search["index_id"]):
+        raise ValueError("Astra selections must be complete and match the configured experiment, targets and index")
+    source = Path(visual["source_run"])
+    if read_manifest(source / "search")["run_id"] != search["run_id"]:
+        raise ValueError("Astra selections use a different retrieval pool")
+    saved = pq.read_table(visual_root / "selected.parquet", columns=["slot", "view_id"]).to_pylist()
+    selected = {r["slot"]: r["view_id"] for r in saved}
+    if len(selected) != len(saved) or set(selected) != {r["slot"] for r in targets}:
+        raise ValueError("Astra selections must cover every original frame exactly once")
+    measured = pq.read_table(source / "evaluations.parquet", columns=["slot", "dense_row", "ms_ssim"]).to_pylist()
+    scores = {(r["slot"], r["dense_row"]): r["ms_ssim"] for r in measured}
+    choices = []
+    for row, query in zip(targets, inverse):
+        pool = top[int(query)]
+        winner = next((i for i, candidate in enumerate(pool) if candidate["view_id"] == selected[row["slot"]]), None)
+        if winner is None:
+            raise ValueError("Astra selected a view outside the original frame's candidate pool")
+        choices.append({"slot": row["slot"], "selected_index": winner,
+                        "scores": [scores[row["slot"], c["dense_row"]] for c in pool]})
+    return choices, {"method": "existing-ms-ssim-reference-only", "source": str(source),
+                     "version": RERANK_VERSION, "pairs": len(measured), "recomputed_pairs": 0,
+                     "visual_experiment_id": visual["experiment_id"]}
 
 
 def displayed_candidates(pool, choice, count):
@@ -217,7 +250,9 @@ def prepare(root: Path, config):
     targets = pq.read_table(root / "targets/targets.parquet").to_pylist()
     score_audit = None
     if full_pool:
-        if config.get("selection_method") == "ms-ssim":
+        if config.get("selection_method") == "astra":
+            choices, score_audit = astra_choices(root, config, targets, inverse, top)
+        elif config.get("selection_method") == "ms-ssim":
             from .grid.rerank import evaluate
             metadata = {row["dense_row"]: row for pool in top.values() for row in pool}
             canonical_rows = [{k:v for k,v in row.items() if k not in {"query","rank","sse","raw_mse"}}
@@ -242,7 +277,7 @@ def prepare(root: Path, config):
             pool = top[int(query)]
             for candidate in displayed_candidates(pool, pool[evaluation["selected_index"]], config["display_top_k"]):
                 thumbnails[candidate["view_id"]] = candidate
-        cached_photos(Path(config.get("reuse_run", root)), root, thumbnails.values(), config,
+        cached_photos(Path(config.get("visual_run", config.get("reuse_run", root))), root, thumbnails.values(), config,
                       tuple(target["canonical_size"]), relative_folder="assets/thumbs")
     else:
         choices = rerank(root, targets, inverse, top, config)
@@ -282,7 +317,7 @@ def prepare(root: Path, config):
                        "places": search["candidate_count"], "source_image": f"targets/{row['frame']}",
                        "credit": credit,
                        "selected_candidate": selected_index,
-                       "score_label": "MS-SSIM" if config.get("selection_method") == "ms-ssim" else "MSE",
+                       "score_label": "MS-SSIM" if config.get("selection_method") in {"ms-ssim", "astra"} else "MSE",
                        "selected_image": image.relative_to(root).as_posix(), "caption": location_caption(choice),
                        "candidates": [{"path": (thumbs / f"{c['view_id']}.png").relative_to(root).as_posix(),
                                        "rank": c["rank"], "raw_mse": c["raw_mse"], "view_id": c["view_id"],
@@ -290,6 +325,7 @@ def prepare(root: Path, config):
         selections.append({**choice, "slot": row["slot"], "source_pts": row["source_pts"],
                            "selected_candidate": selected_index, "selection_score": evaluation["scores"][choice_index],
                            "selection_method": config.get("selection_method", "mse"),
+                           "score_role": "reference" if config.get("selection_method") == "astra" else "selection",
                            "source_time_base": row["source_time_base"], "image": image.relative_to(root).as_posix()})
     selection_path = root / "selected.tmp.parquet"
     pq.write_table(pa.Table.from_pylist(selections), selection_path, compression="zstd")
@@ -299,7 +335,8 @@ def prepare(root: Path, config):
               "rerank_candidates_per_frame":config.get("rerank_top_k",config["display_top_k"]),
               "score_cache":score_audit,
               "selection_method": config.get("selection_method", "mse"),
-              "selection_version": RERANK_VERSION if config.get("selection_method") == "ms-ssim" else "gray-mse-[0,1]-v1",
+              "selection_version": (read_manifest(Path(config["visual_run"]))["version"] if config.get("selection_method") == "astra"
+                                    else RERANK_VERSION if config.get("selection_method") == "ms-ssim" else "gray-mse-[0,1]-v1"),
               "selected_places": len({r["tile_id"] for r in selected.values()}), "native_results": audit,
               "native_detail_available": sum((hero / f"{key}.png").exists() for key in selected),
               "acquisition_years": years,
