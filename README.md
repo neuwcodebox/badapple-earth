@@ -89,6 +89,15 @@ uv run python -m badapple_earth.production.visual render --output data/reviews/a
 
 모든 선택이 채워지면 `comparison.mp4`에 원본·MSE·MS-SSIM·Astra를 같은 canonical 크기와 원본 프레임 순서로 표시한다. `selected.parquet`에는 선택 사진의 출처·회전·source PTS가 남는다. 비교는 무음이며 기본 전곡 설정은 바꾸지 않는다.
 
+인접 프레임의 선택도 고려하는 비교는 `--mode sequential`을 사용한다. 연속 100프레임씩 세 에이전트가 병렬 처리하며 각 job의 `context`는 앞 구간 마지막 10프레임의 참고 시트다. 참고 프레임의 선택은 저장하지 않는다. 고정 `V` ID로 같은 사진을 추적하며 형태 대응이 비슷하면 직전 사진을 유지하되 실제 원본 변화에는 따라가도록 지시한다. 후보 20개와 사진 자체는 독립 비교와 동일하다.
+
+```powershell
+uv run python -m badapple_earth.production.visual prepare --run data/runs/p6-grid32-full --output data/reviews/astra-sequential-300 --mode sequential --workers 3 --independent-run data/reviews/astra-selection-300
+uv run python -m badapple_earth.production.visual render --output data/reviews/astra-sequential-300
+```
+
+연속 모드의 비교 패널은 원본·독립 Astra·MS-SSIM·연속 Astra다. 각 에이전트는 자기 구간의 직전 선택을 고려하며 구간 사이의 실제 선택은 공유하지 않는다.
+
 ### MSE 격자 해상도와 후보 수 높이기
 
 최종 MS-SSIM은 그대로 두고 MSE 검색 격자를 16×12에서 32×24로 높이며, 후보는 격자마다 Top-512까지 넓힌다. 이미 저장한 특징을 사용하므로 새 수집·다운로드 없이 실행한다.

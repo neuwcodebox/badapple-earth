@@ -34,3 +34,8 @@ def test_choices_require_owned_complete_presented_candidates(tmp_path):
     path.write_text("", encoding="utf-8")
     with pytest.raises(ValueError, match="Awaiting 1"):
         read_choices(tmp_path, cases, ["review-01"])
+
+
+def test_sequential_review_assigns_contiguous_segments():
+    assert assignments([12, 10, 11], seed=7, workers=1, mode="sequential") == [[10, 11, 12]]
+    assert assignments([15, 12, 10, 11, 14, 13], seed=7, workers=3, mode="sequential") == [[10, 11], [12, 13], [14, 15]]

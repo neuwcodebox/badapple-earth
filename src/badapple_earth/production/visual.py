@@ -1,4 +1,4 @@
-"""Prepare blind, shuffled human/model choices and render saved selections offline."""
+"""Prepare independent or temporal model choices and render saved selections offline."""
 
 import argparse
 from collections import defaultdict
@@ -21,12 +21,17 @@ from .layout import BG, INK, MUTED, font, resized
 from .render import encoder
 
 VERSION = "blind-random-frame-and-candidate-order-v1"
+SEQUENTIAL_VERSION = "chronological-overlap10-stable-photo-labels-v1"
 
 
-def assignments(slots, seed, workers):
-    """Shuffle globally before partitioning; never give a reviewer a time range."""
+def assignments(slots, seed, workers, mode="independent"):
+    """Choose shuffled groups or contiguous sequences for temporal reviewers."""
     if workers < 1 or len(set(slots)) != len(slots):
         raise ValueError("Require positive workers and distinct source slots")
+    if mode == "sequential":
+        return [chunk.tolist() for chunk in np.array_split(sorted(slots), workers)]
+    if mode != "independent":
+        raise ValueError("Unknown selection mode")
     shuffled = np.random.default_rng(seed).permutation(slots).tolist()
     return [chunk.tolist() for chunk in np.array_split(shuffled, workers)]
 
@@ -41,11 +46,14 @@ def comparison_sheet(case, root, regular, bold):
         x, y = 16 + i % 5 * 272, 240 + i // 5 * 218
         with Image.open(root / "photos" / f"{entry['view_id']}.png") as image:
             canvas.paste(image.convert("RGB"), (x, y))
-        draw.text((x, y + 194), entry["id"], font=regular, fill=INK)
+        label = entry["id"]
+        if "photo_id" in entry:
+            label += " / " + entry["photo_id"]
+        draw.text((x, y + 194), label, font=regular, fill=INK)
     canvas.save(root / "sheets" / f"{case['case_id']}.png")
 
 
-def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3):
+def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3, mode="independent", independent_run=None):
     started = time.perf_counter()
     run, root = run.resolve(), root.resolve()
     source, target = read_manifest(run), read_manifest(run / "targets")
@@ -56,7 +64,19 @@ def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3):
                < Fraction(str(start + duration))]
     if not targets:
         raise ValueError("No source frames in interval")
-    experiment_id = identity([VERSION, source["production_id"], [r["slot"] for r in targets], seed, workers])
+    groups = assignments([r["slot"] for r in targets], seed, workers, mode)
+    version = SEQUENTIAL_VERSION if mode == "sequential" else VERSION
+    settings = [version, source["production_id"], [r["slot"] for r in targets], seed, workers]
+    if mode == "sequential":
+        if independent_run is None:
+            raise ValueError("Independent comparison run is required")
+        independent_run = independent_run.resolve()
+        independent = read_manifest(independent_run)
+        if (independent["status"] != "complete" or independent["target_set_id"] != source["target_set_id"]
+                or independent["index_id"] != source["index_id"] or Path(independent["source_run"]).resolve() != run):
+            raise ValueError("Require completed independent choices from the same production run")
+        settings.append(independent["experiment_id"])
+    experiment_id = identity(settings)
     if (root / "manifest.json").exists():
         existing = read_manifest(root)
         if existing["experiment_id"] != experiment_id:
@@ -76,10 +96,13 @@ def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3):
     photos = {r["view_id"]: r for r in matches}
     photo_counts = cached_photos(run, root, photos.values(), source["config"], tuple(target["canonical_size"]))
     by_slot = {r["slot"]: r for r in targets}
-    groups = assignments(list(by_slot), seed, workers)
+    photo_ids = {view_id: f"V{i + 1:04d}" for i, view_id in enumerate(sorted(photos))}
     cases, jobs = [], []
     for worker, slots in enumerate(groups, 1):
         job = {"job_id": f"review-{worker:02d}", "cases": []}
+        if mode == "sequential":
+            job["context"] = [{"case_id": c["case_id"], "image": str(root / "sheets" / f"{c['case_id']}.png")}
+                              for c in cases[-10:]]
         for slot in slots:
             case_id = f"C{len(cases) + 1:03d}"
             pool = sorted(pools[int(inverse[slot])], key=lambda r: r["rank"])
@@ -89,6 +112,9 @@ def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3):
                     "source_pts": row["source_pts"], "source_time_base": row["source_time_base"],
                     "target_time": row["target_time"], "source_image": str(run / "targets" / row["frame"]),
                     "entries": [{**pool[int(index)], "id": f"P{i + 1:02d}"} for i, index in enumerate(order)]}
+            if mode == "sequential":
+                for entry in case["entries"]:
+                    entry["photo_id"] = photo_ids[entry["view_id"]]
             cases.append(case)
             job["cases"].append({"case_id": case_id, "image": str(root / "sheets" / f"{case_id}.png")})
         job["output"] = str(root / "choices" / f"{job['job_id']}.jsonl")
@@ -99,12 +125,15 @@ def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3):
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda case: comparison_sheet(case, root, regular, bold), cases))
     write_json(root / "private-map.json", {"experiment_id": experiment_id, "cases": cases})
-    manifest = {"experiment_id": experiment_id, "version": VERSION, "status": "awaiting_choices",
+    manifest = {"experiment_id": experiment_id, "version": version, "mode": mode, "status": "awaiting_choices",
                 "source_run": str(run), "target_set_id": source["target_set_id"], "index_id": source["index_id"],
                 "start": start, "duration": duration, "frames": len(targets), "top_k": 20,
                 "seed": seed, "workers": workers, "jobs": jobs, "frame_rate": target["frame_rate"],
+                "context_frames": 10 if mode == "sequential" else 0,
                 "canonical_size": target["canonical_size"], "photo_cache": photo_counts,
                 "network": "none; existing local PNG/RGB only", "prepare_seconds": round(time.perf_counter() - started, 3)}
+    if independent_run is not None:
+        manifest["independent_run"] = str(independent_run)
     write_json(root / "manifest.json", manifest)
     return manifest
 
@@ -131,6 +160,19 @@ def read_choices(root, cases, job_ids):
     return result
 
 
+def transition_counts(rows):
+    ids = [row["view_id"] for row in rows]
+    runs = [1] if ids else []
+    for previous, current in zip(ids, ids[1:]):
+        if previous == current:
+            runs[-1] += 1
+        else:
+            runs.append(1)
+    return {"photo_changes": max(0, len(runs) - 1),
+            "a_b_a_returns": sum(ids[i] == ids[i - 2] and ids[i] != ids[i - 1] for i in range(2, len(ids))),
+            "longest_hold_frames": max(runs, default=0)}
+
+
 def render(root):
     root = root.resolve()
     manifest = read_manifest(root)
@@ -147,7 +189,7 @@ def render(root):
         choice = choices[case["case_id"]]
         records.append({**choice, "case_id": case["case_id"], "slot": case["slot"],
                         "source_pts": case["source_pts"], "source_time_base": case["source_time_base"],
-                        "target_time": case["target_time"], "selection_method": "astra-blind",
+                        "target_time": case["target_time"], "selection_method": "astra-" + manifest.get("mode", "independent"),
                         "ms_ssim_view_id": ms[case["slot"]]["view_id"]})
     pq.write_table(pa.Table.from_pylist(records), root / "selected.parquet")
     started = time.perf_counter()
@@ -155,15 +197,23 @@ def render(root):
     regular = font(config["font_regular"], 16)
     bold = font(config["font_bold"], 21)
     temporary = root / "comparison.tmp.mp4"
+    independent = None
+    if manifest.get("mode") == "sequential":
+        baseline = Path(manifest["independent_run"])
+        independent = {r["slot"]: r for r in pq.read_table(baseline / "selected.parquet").to_pylist()}
     with (root / "encode.log").open("wb") as log:
         process = encoder(temporary, 1920, 528, manifest["frame_rate"], config, log)
         try:
             for i, (case, record) in enumerate(zip(cases, records)):
                 mse = min(case["entries"], key=lambda r: r["rank"])
                 panels = [("ORIGINAL", case["source_image"], None),
-                          ("MSE", root / "photos" / f"{mse['view_id']}.png", mse["rank"]),
+                          (("ASTRA INDEPENDENT" if independent is not None else "MSE"),
+                           (baseline / "photos" / f"{independent[case['slot']]['view_id']}.png" if independent is not None
+                            else root / "photos" / f"{mse['view_id']}.png"),
+                           (independent[case["slot"]]["rank"] if independent is not None else mse["rank"])),
                           ("MS-SSIM", root / "photos" / f"{ms[case['slot']]['view_id']}.png", ms[case["slot"]]["rank"]),
-                          ("ASTRA", root / "photos" / f"{record['view_id']}.png", record["rank"])]
+                          (("ASTRA SEQUENTIAL" if independent is not None else "ASTRA"),
+                           root / "photos" / f"{record['view_id']}.png", record["rank"])]
                 canvas = Image.new("RGB", (1920, 528), BG)
                 draw = ImageDraw.Draw(canvas)
                 for p, (label, path, rank) in enumerate(panels):
@@ -173,6 +223,9 @@ def render(root):
                     if rank is not None:
                         draw.text((x + 12, 420), f"MSE #{rank:02d} / 20", font=regular, fill=MUTED)
                 draw.text((12, 472), f"{case['target_time']:.3f}s   {i + 1:03d} / {len(cases)}", font=regular, fill=INK)
+                if independent is not None:
+                    draw.text((600, 472), f"SEG {int(case['job_id'].split('-')[-1]):02d} / {manifest['workers']:02d}",
+                              font=regular, fill=MUTED)
                 draw.text((1908, 506), "Contains modified Copernicus Sentinel data 2023-2026", font=regular, fill=MUTED, anchor="ra")
                 if i == 90:
                     canvas.save(root / "preview.png")
@@ -186,10 +239,17 @@ def render(root):
                 process.wait()
     temporary.replace(root / "comparison.mp4")
     manifest.update(status="complete", reviewer="gpt-6-astra", reasoning_effort="low",
-                    audio="silent", panels=["ORIGINAL", "MSE", "MS-SSIM", "ASTRA"],
+                    audio="silent", panels=["ORIGINAL", "ASTRA INDEPENDENT", "MS-SSIM", "ASTRA SEQUENTIAL"]
+                    if independent is not None else ["ORIGINAL", "MSE", "MS-SSIM", "ASTRA"],
                     different_from_ms_ssim=sum(r["view_id"] != r["ms_ssim_view_id"] for r in records),
                     different_from_mse=sum(r["rank"] != 1 for r in records),
                     render_seconds=round(time.perf_counter() - started, 3))
+    manifest["transitions"] = {"astra": transition_counts(records),
+                               "ms_ssim": transition_counts([ms[c["slot"]] for c in cases])}
+    if independent is not None:
+        manifest["transitions"]["independent_astra"] = transition_counts([independent[c["slot"]] for c in cases])
+        manifest["different_from_independent"] = sum(r["view_id"] != independent[c["slot"]]["view_id"]
+                                                     for c, r in zip(cases, records))
     write_json(root / "manifest.json", manifest)
     return manifest
 
@@ -203,8 +263,15 @@ def main():
     parser.add_argument("--duration", type=float, default=10)
     parser.add_argument("--seed", type=int, default=20261103)
     parser.add_argument("--workers", type=int, default=3)
+    parser.add_argument("--mode", choices=("independent", "sequential"), default="independent")
+    parser.add_argument("--independent-run", type=Path)
     args = parser.parse_args()
-    result = prepare(args.run, args.output, args.start, args.duration, args.seed, args.workers) if args.stage == "prepare" else render(args.output)
+    if args.stage == "prepare":
+        if args.mode == "sequential" and args.independent_run is None:
+            parser.error("--independent-run is required for sequential comparison")
+        result = prepare(args.run, args.output, args.start, args.duration, args.seed, args.workers, args.mode, args.independent_run)
+    else:
+        result = render(args.output)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
