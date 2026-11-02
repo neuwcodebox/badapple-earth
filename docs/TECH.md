@@ -31,7 +31,7 @@ AOI/시기/할당량 ─ STAC 장면 검색 ─ 접근/자산 확인            
 | 수집기 | AOI quota, 원격 블록·창, 유효성·중복·작업 상태 | F3, F4, F10, N3 |
 | 공통 특징 처리 | RGB→명암·축소·특징 버전 | F5, F6, N2 |
 | 저장소 | 타일 ID, 불변 인덱스 shard, 선택 이미지, commit 상태 | F5, F7, F10, N2, N3 |
-| 검색기 | PHOG/Rank 전수 검색·영역/SDF/Chamfer·형태 우선 선택, 독립 MSE 기준선 | F6, F12, N1, N3 |
+| 검색기 | 정확 MSE Top-K·선택 지표 비교, 독립 PHOG/Rank·SDF/Chamfer 실험 | F6, F12, N1, N3 |
 | 재추출·렌더 | 소스 재해석, 정확한 창·변환, 시간 배치, 음원 | F7, F8, N1 |
 | 보고·출처 | 비교 샘플·점수·자원·권리·프레임별 provenance | F9, F11, F13, N4, N6 |
 
@@ -393,6 +393,20 @@ FAISS는 초기 필수 의존성이 아니다. 반복 검색이 병목으로 확
 `production/rerank.py`는 256×191 grayscale에서 5단계 MS-SSIM을 계산한다. Gaussian 11×11·σ1.5, K1=.01·K2=.03, 2×2 평균 다운샘플과 홀수 경계 reflect padding, 원 논문의 가중치 `.0448/.2856/.3001/.2363/.1333`을 사용한다. 각 단계의 유효 창에서 평균 contrast/structure를 구하고 마지막 단계에 luminance를 포함해 곱한다. 음수 분수 거듭제곱을 피하도록 단계 평균은 [1e-8,1]로 제한한다. [MS-SSIM 원 논문](https://ece.uwaterloo.ca/~z70wang/publications/msssim.html)과 [SSIM 저자 설명](https://www.cns.nyu.edu/~lcv/ssim/)을 참고한다.
 
 각 실제 source frame의 full canonical grayscale을 평가한다. coarse 특징이 같아 MSE 검색을 공유해도 미세한 명암 구조가 다를 수 있으므로 재평가 결과를 coarse query 단위로 묶지 않는다. 다섯 후보의 점수 최대를 선택하고 동률이면 MSE 순위·view ID 순서를 따른다. 여덟 프로세스와 프로세스별 bounded candidate 통계 캐시를 사용하며 180프레임 배치를 저장해 재개한다. 점수가 높다는 사실만으로 이 작품의 재생 품질 개선을 판정하지 않는다.
+
+`compare-metrics`는 전곡 선택 설정과 독립된 동일 후보 비교다. `production/comparison.py`가 완료 run의 Top-20 view와 실제 PTS를 읽고, 지정 구간의 모든 원본 프레임에서 아래 다섯 지표를 평가한다. 서로 다른 장소 다섯 장으로 줄이지 않으며 같은 장소의 다른 회전도 원래 검색 결과에 있으면 유지한다. 기존 다섯 장소 MS-SSIM의 선택도 같은 계산에서 구해 후보 범위 확대의 영향을 따로 기록한다.
+
+| 지표 | 정의·고정 설정 | 선택 방향 |
+| --- | --- | --- |
+| MSE | 원래 16×12 특징의 정확 검색 점수. 기존 선택의 기준선 | 최소 |
+| MS-SSIM | 위의 256×191·5단계 구현과 동일 | 최대 |
+| FSIM | 256×191 명암, log-Gabor 4스케일·4방향, 최소 파장 6·배수 2·σ/f=.55·각도 계수 1.2, Scharr/16, T1=.85·T2=160 | 최대 |
+| 다중 해상도 MSE | 같은 명암을 BOX로 폭 64·32·16(높이는 비율 유지)으로 각각 축소한 MSE의 동등 가중 평균 | 최소 |
+| ZNCC | 256×191의 평균을 뺀 두 명암 배열의 정규화 내적. 명암 반전은 허용하지 않음 | 최대 |
+
+FSIM은 [저자 코드](https://cslinzhang.github.io/home/FSIM/Files/FeatureSIM.m)의 grayscale 경로와 FSIM 전용 phase congruency 설정을 Python/NumPy/SciPy로 이식했다. 입력의 짧은 변이 256 이하라 저자 코드의 자동 추가 축소는 필요 없다. 저자 구현의 영 채움 Scharr 경계를 따른다. 수치상 phase weight 합이 0인 무특징 쌍에서는 `1-full_resolution_MSE`로 처리한다. ZNCC는 한쪽 분산이 0이면 -1로 처리하며, 타깃이 단색이면 모든 후보가 동률이 되어 원래 MSE 선택을 유지한다. 실제 동률은 모두 MSE 순위·view ID 순서로 해소한다. FSIM 포트의 연구·교육 목적 이용 조건과 Kovesi 필터의 고지는 [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)에 둔다. MATLAB과의 수치 일치 검증은 수행하지 않았다.
+
+사진은 기존 PNG 또는 RGB shard만 사용한다. 캐시가 없으면 오류로 끝내며 원격 재추출을 하지 않는다. 모든 패널은 같은 canonical 해상도·원색·표시 크기를 사용해 지표와 원본 디테일 차이가 섞이지 않게 한다. 여덟 CPU 프로세스·bounded 특징 캐시·20프레임 체크포인트를 사용한다. 결과에는 모든 후보별 점수·선택·원래 MSE 순위·실제 출처와 PTS를 남긴다. 비교 영상은 무음이며 각 연속 source PTS당 한 프레임을 인코딩한다. 지표별 점수 단위가 달라 서로의 수치를 직접 비교하지 않으며, 이 shortlist 실험은 다른 지표로 100만 장소를 전수 검색한 결과가 아니다.
 
 형태 실험의 점수는 고정된 [0,1] 성분과 버전별 가중치를 사용하고 후보 집합마다 min/max 정규화하지 않는다. PHOG·Rank의 서로 다른 점수를 합산해 후보를 제거하지 않는다. 해당 실험의 최종 선택은 시인성→형태 허용폭→실제 광도 순서이며, 동일 마스크에서 계산한 성분만 결합한다. 이 수치는 검증된 보편 최적값이 아니다.
 

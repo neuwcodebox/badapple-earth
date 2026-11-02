@@ -53,6 +53,20 @@ uv run badapple-earth produce --config config/production.json --output data/runs
 
 후보 썸네일은 기존 RGB를 재사용한다. 큰 해상도는 선택된 큰 원본 창에만 요청하고, 실패하면 같은 view의 보관된 사진을 사용한다. 검색용 packing은 약 3.4GB의 추가 로컬 캐시이며 완료 후 재사용한다. 180프레임 단위로 두 결과를 인코딩해 재시작 시 완료한 구간을 다시 만들지 않는다.
 
+### 선택 지표 비교
+
+완료한 전곡 run의 Top-20 view를 재사용해 MSE·MS-SSIM·FSIM·다중 해상도 MSE·ZNCC를 같은 후보에서 비교한다. 지정 구간의 모든 원본 프레임을 사용하며 추가 검색·다운로드는 하지 않는다.
+
+```powershell
+$env:OPENBLAS_NUM_THREADS = '1'
+$env:OMP_NUM_THREADS = '1'
+uv run badapple-earth compare-metrics --run data/runs/p6-full --output data/runs/p6-metrics-top20 --start 38 --duration 10 --top-k 20 --workers 8
+```
+
+`comparison.mp4`는 위쪽 원본·MSE·MS-SSIM, 아래쪽 FSIM·Multi-MSE·ZNCC의 2×3 비교 영상이다. 알고리즘명·선택된 사진의 원래 MSE 순위·해당 지표 점수와 작은 시간·프레임 카운터를 표시한다. 무음이며 각 패널은 같은 canonical RGB를 사용한다. `evaluations.parquet`에는 모든 프레임×후보의 점수와 출처, `selected.parquet`에는 방법별 선택, `manifest.json`에는 설정·변경 수·선택 순위 분포·비용이 남는다. 같은 명령으로 완료 점수 배치를 재사용한다.
+
+이 실험의 MS-SSIM은 Top-20 전체를 평가하므로 전곡 버전의 다섯 장소 재평가와 후보 범위가 다르다. 지표 간 점수는 단위가 달라 직접 비교할 수 없다. FSIM 포트는 연구·교육 목적 이용 조건을 따르며 [고지](THIRD_PARTY_NOTICES.md)와 [계산 설정](docs/TECH.md#53-점수-조합과-반복-제어)을 참고한다. 전곡의 기본 선택 설정은 이 비교 실행으로 바뀌지 않는다.
+
 ### 3. P1 실제 실행
 
 FFmpeg/ffprobe가 PATH에 있고 MP4를 배치했다면 입력 메타데이터·SHA-256과 대표 프레임 비교 시트를 생성한다.

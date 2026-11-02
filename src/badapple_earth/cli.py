@@ -75,6 +75,13 @@ def main() -> int:
     production = commands.add_parser("produce", help="Use every source frame and render the complete 16:9 search presentation")
     production.add_argument("--config", type=Path, default=Path("config/production.json"))
     production.add_argument("--output", type=Path, required=True)
+    metrics = commands.add_parser("compare-metrics", help="Compare five CPU metrics on cached Top-K and every frame in an interval")
+    metrics.add_argument("--run", type=Path, required=True)
+    metrics.add_argument("--output", type=Path, required=True)
+    metrics.add_argument("--start", type=float, default=38)
+    metrics.add_argument("--duration", type=float, default=10)
+    metrics.add_argument("--top-k", type=int, default=20)
+    metrics.add_argument("--workers", type=int, default=8)
     args = parser.parse_args()
     try:
         if args.command == "probe":
@@ -124,6 +131,10 @@ def main() -> int:
             from .production.pipeline import produce
             result = produce(json.loads(args.config.read_text(encoding="utf-8")), args.output)
             print(f"Production {result['status']}: {result['source_frames']} original frames; {args.output}")
+        elif args.command == "compare-metrics":
+            from .production.comparison import compare_metrics
+            result = compare_metrics(args.run, args.output, args.start, args.duration, args.top_k, args.workers)
+            print(f"Metric comparison {result['status']}: {result['source_frames']} original frames; {args.output}")
         elif args.command == "shape-index":
             from .shape.index import build
             result = build(args.index, args.output, args.workers)
