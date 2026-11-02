@@ -101,15 +101,23 @@ NAIP는 촬영 시기·지역에 따라 대략 0.3~1m급 항공영상으로 세�
 | 경로 | 카탈로그·자산 | 접근 정책 |
 | --- | --- | --- |
 | Earth Search | 같은 API의 collection `naip`, asset `image` | 먼저 메타데이터 확인. 실제 href의 AWS 과금·인증 조건을 점검하고 승인 없이는 유료 읽기 금지 |
-| Microsoft Planetary Computer | `https://planetarycomputer.microsoft.com/api/stac/v1`, collection `naip`, 실제 RGB asset 확인 | 조건부 대체 접근 후보. SDK 서명과 서비스 정책·실제 COG 읽기를 P5에서 확인 |
+| Microsoft Planetary Computer | `https://planetarycomputer.microsoft.com/api/stac/v1`, collection `naip`, asset `image` | 사용자 API 키 없는 SAS 발급·실제 COG 창 읽기 확인. 대량 처리량·서비스 제한은 미검증 |
 
 Earth Search의 NAIP 정의는 `image`를 RGB+NIR의 4밴드 COG로 기술한다. 컬렉션의 촬영기간 정보도 Sentinel-2와 같지 않으므로, Sentinel의 2023년 이후 필터나 `eo:cloud_cover`를 그대로 적용하지 않는다. RGB 밴드만 정확히 고르고 NIR를 가시광 채널로 사용하지 않는다.[R2]
 
-Planetary Computer는 `planetary_computer.sign` 또는 `sign_inplace`를 사용하는 공식 Python SDK 경로를 제공한다. 서명된 URL은 임시 접근에만 쓰고 영구 식별자로 저장하지 않는다. 키가 필수인지·제한이 어떤지는 해당 환경에서 다시 확인한다.[R5] 이 문서 작성 단계에서 그 경로로 실제 NAIP 픽셀을 읽은 것은 아니다.
+Planetary Computer는 `planetary_computer.sign` 또는 `sign_inplace`를 사용하는 공식 Python SDK 경로를 제공한다.[R5] 실제 접근 검증에서는 SDK와 같은 `/api/sas/v1/token/{account}/{container}` API에서 사용자 API 키 없이 임시 SAS를 발급받았다. 서명된 URL은 메모리에서만 사용하고 영구 식별자로 저장하지 않는다. 검증한 0.6m 자료는 4밴드 uint8이며 RGB는 1·2·3번이다. 4번 NIR는 TIFF color interpretation에서 `undefined`일 수도 있으므로 밴드 의미는 STAC과 함께 해석한다. 소량 접근 성공과 대량 처리량·할당량 검증을 구분한다.
 
 경로가 바뀌면 source ID도 `planetarycomputer-naip` 등으로 구분한다. 서로 다른 제공자의 동일 지역 영상이 자동으로 동일한 바이트·촬영분이라는 가정은 하지 않는다.
 
-#### 2.3 후순위 소스와 공통 규칙
+#### 2.3 LINZ — 뉴질랜드 항공사진 보강 후보
+
+공개 정적 STAC 카탈로그는 `https://nz-imagery.s3.ap-southeast-2.amazonaws.com/catalog.json`이다. 컬렉션·item의 상대 링크를 각 문서 URL 기준으로 해석하고, item의 `visual` COG를 익명 HTTPS로 읽는다. 컬렉션 수는 여러 시기·종류의 촬영 사업 수이며 고유 지역 수가 아니다.[R11]
+
+검증한 자료는 RGB+alpha의 4밴드 uint8·WebP 압축 COG다. RGB는 1·2·3번을 사용하고 유효성에는 alpha가 반영된 dataset mask를 쓴다. 기존 Rasterio/GDAL 환경에서 디코딩을 확인했다. 확장자가 `.tiff`일 수 있고 asset에 선택 필드인 `roles`가 없을 수 있다. `datetime=null`이면 `start_datetime`·`end_datetime` 촬영 구간을 보존하고 임의의 단일 촬영일로 바꾸지 않는다. 검증한 세 컬렉션의 라이선스는 CC-BY-4.0이며 실제 licensor는 각 컬렉션의 provider에서 추적한다.
+
+NAIP와 LINZ에는 Sentinel-2 SCL이 없으므로 이를 합성하거나 구름 비율 0으로 보고하지 않는다. 소스별 품질 정책, 촬영 시간 표현, 원본 밴드와 해상도를 반영하는 수집기 연결은 미구현이다. 접근 검증의 실제 장면·창·결과는 [항공사진 접근 기록](history/2026-11-02-P5-aerial-access.md)에 둔다.
+
+#### 2.4 후순위 소스와 공통 규칙
 
 Landsat Collection 2는 넓은 지형 패턴을 위한 후순위 후보이며, OpenAerialMap은 영상별 이용 조건·품질 검토가 필요하다. 첫 구현에 추가하지 않는다. 상용 지도 서비스 화면 캡처와 타일 스크래핑은 제외한다.
 
@@ -675,5 +683,6 @@ feature/schema/extraction 버전이 달라지면 기존 인덱스와 호환 가�
 - **[R8]** [Sentinel Hub SCL 분류 설명](https://custom-scripts.sentinel-hub.com/sentinel-2/scene-classification/) — 구름·그림자·NoData·눈 등 클래스 의미.
 - **[R9]** [ffprobe 공식 문서](https://ffmpeg.org/ffprobe.html) — 입력 메타데이터 검사.
 - **[R10]** [Copernicus Sentinel 데이터 고지문](https://cds.climate.copernicus.eu/licences/ec-sentinel) — 재사용·변경·출처 고지.
+- **[R11]** [LINZ imagery 공식 저장소](https://github.com/linz/imagery), [New Zealand Imagery 공개 데이터 안내](https://registry.opendata.aws/nz-imagery/) — 정적 STAC·익명 접근·COG·컬렉션별 출처.
 
 원문에서 제시한 추가 구현 참고: [Earth Search 안내](https://element84.com/earth-search/), [사용 예](https://element84.com/earth-search/examples), [공개 저장소](https://github.com/Element84/earth-search), [GDAL 원격 파일 시스템](https://gdal.org/en/stable/user/virtual_file_systems.html), [Planetary Computer 접근 개념](https://planetarycomputer.microsoft.com/docs/concepts/sas/), [USDA NAIP 데이터 설명](https://catalog.data.gov/dataset/national-agriculture-imagery-program-naip-imagery). 이 보조 링크의 서비스 접속과 실제 데이터 읽기는 구현 단계에서 확인한다.
