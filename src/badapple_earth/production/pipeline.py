@@ -28,13 +28,13 @@ def produce(config, output: Path):
         previous = read_manifest(output) if path.exists() else None
         if previous and previous["production_id"] != production_id:
             raise ValueError("Production configuration changed; choose a new output path")
+        target = targets({key: config[key] for key in ("input", "crop", "frame_mode")}, output / "targets")
         if previous and previous["status"] == "complete" and all((output / name).exists() for name in ("final-16x9.mp4", "satellite-full.mp4")):
             return previous
         state = {"schema": "all-frame-production-v1", "production_id": production_id,
                  "config": config, "status": "targets", "started_at": datetime.now(timezone.utc).isoformat()}
         write_json(path, state)
         try:
-            target = targets({key: config[key] for key in ("input", "crop", "frame_mode")}, output / "targets")
             state.update(status="search", source_frames=target["count"], target_set_id=target["target_set_id"])
             write_json(path, state)
             result = search(output / "targets", Path(config["index"]), Path(config["packed_index"]), output / "search",

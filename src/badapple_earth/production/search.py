@@ -58,6 +58,8 @@ def pack(index: Path, output: Path):
             positions = np.array([i for i, row in enumerate(rows) if row["tile_id"] not in excluded], dtype=np.int32)
             begin, end = state["written"], state["written"] + len(positions)
             data = np.load(directory / "gray_coarse.npy", mmap_mode="r", allow_pickle=False)
+            if data.dtype != np.uint8 or data.shape != (len(rows), *source["coarse_shape"]):
+                raise ValueError("Source feature rows, shape or dtype disagree with the snapshot")
             pixels = data[positions].reshape(len(positions), dimension)
             arrays["features"][begin:end] = pixels
             numeric = pixels.astype(np.int32)

@@ -29,4 +29,26 @@ $env:NUMBA_NUM_THREADS = '8'
 uv run badapple-earth produce --config config/production.json --output data/runs/p6-full
 ```
 
-원본 전체 프레임의 정확한 Top-20 검색을 완료했다. 이미지 준비·렌더는 진행 중이며 최종 파일·실측·최소 결과 점검은 완료 후 기록한다.
+모든 단계가 완료됐다. `data/runs/p6-full/`의 산출물은 다음과 같다.
+
+| 파일 | 실제 내용 |
+| --- | --- |
+| `final-16x9.mp4` | 1920×1080 설명 화면, H.264/yuv420p, 200,700,761bytes |
+| `satellite-full.mp4` | 원래 1444×1080 비율의 사진 전용, H.264/yuv420p, 215,438,425bytes |
+| `preview.png`, `native-detail-preview.png` | 완성 레이아웃과 native 디테일을 확인한 실제 대표 프레임 |
+| `selected.parquet` | 모든 source frame의 선택·좌표·촬영일·변환·이미지 경로 |
+| `frame-plan.parquet` | 모든 source PTS와 원본·다섯 후보·최종 사진·설명 메타데이터 |
+| `search/matches.parquet`, `query_inverse.npy` | 고유 특징별 Top-20와 전체 source frame 복원 매핑 |
+| `manifest.json`, `credits.json`, `assets/manifest.json` | 설정·ID·원본 식별·출처·추가 디테일 읽기 기록 |
+
+두 완성 파일을 FFprobe로 한 번씩 확인했다. 영상은 원본과 같은 6,955프레임·30000/1001fps·time base 1/30000·start 0·232.065167초다. AAC도 원본과 같은 9,997프레임·time base 1/44100·start 0·232.129887초다. 복제·보간·프레임 생략 없이 전곡을 출력했다. 41초의 최종 화면과 약 33.93초의 native 해안 사진 화면에서 후보와 큰 사진의 방향·화각·글자·연결선을 확인했다. 전체 재생의 작품성에 대한 사용자 평가는 아직이다.
+
+후보 캐시 5,765개 view·4,719개 장소를 준비했고 전곡은 1,352개 장소·1,536개 view를 선택했다. 큰 창의 선택 669개 view에서 native 디테일을 읽었으며 추가 읽기 실패나 canonical 대체는 0개다. 나머지는 원래 256px 창의 보관된 사진을 사용한다. 선택 각도별 source frame은 0/90/180/270도 순서로 1,372/1,969/1,387/2,227개다. 원본 창 256/512/1024/2048px별 source frame은 4,053/1,990/678/234개다.
+
+51개 전수 검색 배치의 로그 계산시간 합계는 **47.24초**다. 초기 targets 추출·packing·메타데이터 해석·이미지 준비·렌더 시간은 포함하지 않으며 재검색 벤치마크는 하지 않았다. 이미 완료한 targets/검색을 재사용한 마지막 `produce` 실행의 이미지 준비·두 영상 인코딩·결합은 약 **479.58초**였다. 평균 전곡 Best MSE는 0.05315976이며 목표 집합이 달라 이전 10초 평균과 직접 비교하지 않는다. GPU·유료 실행·외부 업로드는 사용하지 않았다.
+
+- source index ID: `0af3913546907b7000fc31ce96d5a659e23f9492856ba7eeae11ea9715e12a6f`
+- target set ID: `6ed26d6e41b9fb13c45f6c2222ed659d93e574a4d95b856fd3b8d0e9946d969f`
+- search run ID: `ac05e71aa81d830602c3ccab381001ab42f8f2638a93ec3a6d6c6c5a35c4a755`
+- production ID: `6a740179036ab57d1a43f8d1528e3419be34380e6d5251a3b78a7cd4d66b8f7c`
+- render ID: `53b24a66be29e4e09cb1f0863510a3b97c84a9ed328ea58e8124164ce2b4bca1`

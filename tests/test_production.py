@@ -33,6 +33,9 @@ def test_all_targets_keep_every_frame_and_its_original_pts(tmp_path):
     assert [row["source_pts"] for row in rows] == original
     assert len(list((tmp_path / "targets/frames").glob("*.png"))) == 7
     assert targets(config, tmp_path / "targets")["target_set_id"] == result["target_set_id"]
+    video.write_bytes(video.read_bytes() + b"changed-input-identity")
+    with pytest.raises(ValueError, match="another input"):
+        targets(config, tmp_path / "targets")
 
 
 def test_encoded_segments_keep_all_frames_and_resume_without_encoding_again(tmp_path, monkeypatch):
