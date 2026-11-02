@@ -1,0 +1,212 @@
+"""Prepare blind, shuffled human/model choices and render saved selections offline."""
+
+import argparse
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from fractions import Fraction
+import json
+from pathlib import Path
+import time
+
+import numpy as np
+from PIL import Image, ImageDraw
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from ..collection.bundle import read_manifest
+from ..collection.windows import identity
+from ..evidence import write_json
+from .assets import cached_photos
+from .layout import BG, INK, MUTED, font, resized
+from .render import encoder
+
+VERSION = "blind-random-frame-and-candidate-order-v1"
+
+
+def assignments(slots, seed, workers):
+    """Shuffle globally before partitioning; never give a reviewer a time range."""
+    if workers < 1 or len(set(slots)) != len(slots):
+        raise ValueError("Require positive workers and distinct source slots")
+    shuffled = np.random.default_rng(seed).permutation(slots).tolist()
+    return [chunk.tolist() for chunk in np.array_split(shuffled, workers)]
+
+
+def comparison_sheet(case, root, regular, bold):
+    canvas = Image.new("RGB", (1392, 1128), BG)
+    draw = ImageDraw.Draw(canvas)
+    draw.text((16, 4), case["case_id"] + " / TARGET", font=bold, fill=INK)
+    with Image.open(case["source_image"]) as image:
+        canvas.paste(image.convert("RGB"), (16, 32))
+    for i, entry in enumerate(case["entries"]):
+        x, y = 16 + i % 5 * 272, 240 + i // 5 * 218
+        with Image.open(root / "photos" / f"{entry['view_id']}.png") as image:
+            canvas.paste(image.convert("RGB"), (x, y))
+        draw.text((x, y + 194), entry["id"], font=regular, fill=INK)
+    canvas.save(root / "sheets" / f"{case['case_id']}.png")
+
+
+def prepare(run, root, start=38.0, duration=10.0, seed=20261103, workers=3):
+    started = time.perf_counter()
+    run, root = run.resolve(), root.resolve()
+    source, target = read_manifest(run), read_manifest(run / "targets")
+    if start < 0 or duration <= 0 or start + duration > target["duration_seconds"] + 1e-6:
+        raise ValueError("Interval must lie inside the original video")
+    targets = [r for r in pq.read_table(run / "targets/targets.parquet").to_pylist()
+               if Fraction(str(start)) <= Fraction(r["source_pts"]) * Fraction(r["source_time_base"])
+               < Fraction(str(start + duration))]
+    if not targets:
+        raise ValueError("No source frames in interval")
+    experiment_id = identity([VERSION, source["production_id"], [r["slot"] for r in targets], seed, workers])
+    if (root / "manifest.json").exists():
+        existing = read_manifest(root)
+        if existing["experiment_id"] != experiment_id:
+            raise ValueError("Use another output directory for different inputs or randomization")
+        return existing
+    root.mkdir(parents=True, exist_ok=True)
+    for directory in ("sheets", "jobs", "choices"):
+        (root / directory).mkdir(exist_ok=True)
+    inverse = np.load(run / "search/query_inverse.npy", allow_pickle=False)
+    queries = sorted({int(inverse[r["slot"]]) for r in targets})
+    matches = pq.read_table(run / "search/matches.parquet", filters=[("query", "in", queries), ("rank", "<=", 20)]).to_pylist()
+    pools = defaultdict(list)
+    for row in matches:
+        pools[row["query"]].append(row)
+    if any(len(pools[q]) != 20 for q in queries):
+        raise ValueError("Require exactly twenty saved candidates for each source frame")
+    photos = {r["view_id"]: r for r in matches}
+    photo_counts = cached_photos(run, root, photos.values(), source["config"], tuple(target["canonical_size"]))
+    by_slot = {r["slot"]: r for r in targets}
+    groups = assignments(list(by_slot), seed, workers)
+    cases, jobs = [], []
+    for worker, slots in enumerate(groups, 1):
+        job = {"job_id": f"review-{worker:02d}", "cases": []}
+        for slot in slots:
+            case_id = f"C{len(cases) + 1:03d}"
+            pool = sorted(pools[int(inverse[slot])], key=lambda r: r["rank"])
+            order = np.random.default_rng(np.random.SeedSequence([seed, slot])).permutation(20)
+            row = by_slot[slot]
+            case = {"case_id": case_id, "job_id": job["job_id"], "slot": slot,
+                    "source_pts": row["source_pts"], "source_time_base": row["source_time_base"],
+                    "target_time": row["target_time"], "source_image": str(run / "targets" / row["frame"]),
+                    "entries": [{**pool[int(index)], "id": f"P{i + 1:02d}"} for i, index in enumerate(order)]}
+            cases.append(case)
+            job["cases"].append({"case_id": case_id, "image": str(root / "sheets" / f"{case_id}.png")})
+        job["output"] = str(root / "choices" / f"{job['job_id']}.jsonl")
+        write_json(root / "jobs" / f"{job['job_id']}.json", job)
+        jobs.append(job["job_id"])
+    regular = font(source["config"]["font_regular"], 18)
+    bold = font(source["config"]["font_bold"], 20)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(lambda case: comparison_sheet(case, root, regular, bold), cases))
+    write_json(root / "private-map.json", {"experiment_id": experiment_id, "cases": cases})
+    manifest = {"experiment_id": experiment_id, "version": VERSION, "status": "awaiting_choices",
+                "source_run": str(run), "target_set_id": source["target_set_id"], "index_id": source["index_id"],
+                "start": start, "duration": duration, "frames": len(targets), "top_k": 20,
+                "seed": seed, "workers": workers, "jobs": jobs, "frame_rate": target["frame_rate"],
+                "canonical_size": target["canonical_size"], "photo_cache": photo_counts,
+                "network": "none; existing local PNG/RGB only", "prepare_seconds": round(time.perf_counter() - started, 3)}
+    write_json(root / "manifest.json", manifest)
+    return manifest
+
+
+def read_choices(root, cases, job_ids):
+    expected = {case["case_id"]: case for case in cases}
+    result = {}
+    for job_id in job_ids:
+        path = root / "choices" / f"{job_id}.jsonl"
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            if not line.strip():
+                continue
+            choice = json.loads(line)
+            case_id, candidate = choice["case_id"], choice["candidate_id"]
+            case = expected.get(case_id)
+            if case is None or case["job_id"] != job_id or case_id in result:
+                raise ValueError(f"Unexpected or duplicate choice: {case_id}")
+            entries = {r["id"]: r for r in case["entries"]}
+            if candidate not in entries:
+                raise ValueError(f"Choice outside presented candidates: {case_id} {candidate}")
+            result[case_id] = entries[candidate]
+    if result.keys() != expected.keys():
+        raise ValueError(f"Awaiting {len(expected.keys() - result.keys())} frame choices")
+    return result
+
+
+def render(root):
+    root = root.resolve()
+    manifest = read_manifest(root)
+    if manifest["status"] == "complete":
+        return manifest
+    cases = json.loads((root / "private-map.json").read_text(encoding="utf-8"))["cases"]
+    choices = read_choices(root, cases, manifest["jobs"])
+    cases.sort(key=lambda r: r["slot"])
+    run = Path(manifest["source_run"])
+    source = read_manifest(run)
+    ms = {r["slot"]: r for r in pq.read_table(run / "selected.parquet").to_pylist()}
+    records = []
+    for case in cases:
+        choice = choices[case["case_id"]]
+        records.append({**choice, "case_id": case["case_id"], "slot": case["slot"],
+                        "source_pts": case["source_pts"], "source_time_base": case["source_time_base"],
+                        "target_time": case["target_time"], "selection_method": "astra-blind",
+                        "ms_ssim_view_id": ms[case["slot"]]["view_id"]})
+    pq.write_table(pa.Table.from_pylist(records), root / "selected.parquet")
+    started = time.perf_counter()
+    config = {**source["config"], "encoder_threads": 4}
+    regular = font(config["font_regular"], 16)
+    bold = font(config["font_bold"], 21)
+    temporary = root / "comparison.tmp.mp4"
+    with (root / "encode.log").open("wb") as log:
+        process = encoder(temporary, 1920, 528, manifest["frame_rate"], config, log)
+        try:
+            for i, (case, record) in enumerate(zip(cases, records)):
+                mse = min(case["entries"], key=lambda r: r["rank"])
+                panels = [("ORIGINAL", case["source_image"], None),
+                          ("MSE", root / "photos" / f"{mse['view_id']}.png", mse["rank"]),
+                          ("MS-SSIM", root / "photos" / f"{ms[case['slot']]['view_id']}.png", ms[case["slot"]]["rank"]),
+                          ("ASTRA", root / "photos" / f"{record['view_id']}.png", record["rank"])]
+                canvas = Image.new("RGB", (1920, 528), BG)
+                draw = ImageDraw.Draw(canvas)
+                for p, (label, path, rank) in enumerate(panels):
+                    x = p * 480
+                    draw.text((x + 12, 10), label, font=bold, fill=INK)
+                    canvas.paste(resized(path, 480, 358), (x, 48))
+                    if rank is not None:
+                        draw.text((x + 12, 420), f"MSE #{rank:02d} / 20", font=regular, fill=MUTED)
+                draw.text((12, 472), f"{case['target_time']:.3f}s   {i + 1:03d} / {len(cases)}", font=regular, fill=INK)
+                draw.text((1908, 506), "Contains modified Copernicus Sentinel data 2023-2026", font=regular, fill=MUTED, anchor="ra")
+                if i == 90:
+                    canvas.save(root / "preview.png")
+                process.stdin.write(canvas.tobytes())
+            process.stdin.close()
+            if process.wait() != 0:
+                raise ValueError("Encoding failed; see encode.log")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait()
+    temporary.replace(root / "comparison.mp4")
+    manifest.update(status="complete", reviewer="gpt-6-astra", reasoning_effort="low",
+                    audio="silent", panels=["ORIGINAL", "MSE", "MS-SSIM", "ASTRA"],
+                    different_from_ms_ssim=sum(r["view_id"] != r["ms_ssim_view_id"] for r in records),
+                    different_from_mse=sum(r["rank"] != 1 for r in records),
+                    render_seconds=round(time.perf_counter() - started, 3))
+    write_json(root / "manifest.json", manifest)
+    return manifest
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("stage", choices=("prepare", "render"))
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--run", type=Path, default=Path("data/runs/p6-grid32-full"))
+    parser.add_argument("--start", type=float, default=38)
+    parser.add_argument("--duration", type=float, default=10)
+    parser.add_argument("--seed", type=int, default=20261103)
+    parser.add_argument("--workers", type=int, default=3)
+    args = parser.parse_args()
+    result = prepare(args.run, args.output, args.start, args.duration, args.seed, args.workers) if args.stage == "prepare" else render(args.output)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -73,6 +73,22 @@ uv run badapple-earth compare-metrics --run data/runs/p6-full --output data/runs
 
 이 지표 비교는 `p6-full`의 16×12 검색 Top-20을 사용하며 현재 기본 제작의 32×24 검색과 구분한다. 지표 간 점수는 단위가 달라 직접 비교할 수 없다. FSIM 포트는 연구·교육 목적 이용 조건을 따르며 [고지](THIRD_PARTY_NOTICES.md)와 [계산 설정](docs/TECH.md#53-점수-조합과-반복-제어)을 참고한다. 비교 명령은 전곡의 설정을 변경하지 않는다.
 
+### Astra로 같은 후보에서 선택하기
+
+완료된 32×24 Top-20을 Astra 서브에이전트에게 보여주는 별도 실험이다. 프레임을 전체에서 무작위로 섞어 에이전트에 나누고 후보 순서도 독립적으로 섞는다. 시간·기존 점수·순위·선택은 가린다. 시트는 기존 RGB만 사용하며 새 검색·다운로드·API 결제를 하지 않는다.
+
+```powershell
+uv run python -m badapple_earth.production.visual prepare --run data/runs/p6-grid32-full --output data/reviews/astra-selection-300 --start 38 --duration 10 --workers 3 --seed 20261103
+```
+
+`jobs/review-*.json`의 시트를 각 에이전트에게 맡긴다. 에이전트는 자신에게 배정된 시트만 보고 각 case에서 후보 하나를 선택해 지정된 `choices/review-*.jsonl`에 `{"case_id":"C001","candidate_id":"P07"}` 형식으로 저장한다. `private-map.json`은 선택이 끝나기 전 에이전트에게 공개하지 않는다. 완료된 선택은 그대로 보존한다.
+
+```powershell
+uv run python -m badapple_earth.production.visual render --output data/reviews/astra-selection-300
+```
+
+모든 선택이 채워지면 `comparison.mp4`에 원본·MSE·MS-SSIM·Astra를 같은 canonical 크기와 원본 프레임 순서로 표시한다. `selected.parquet`에는 선택 사진의 출처·회전·source PTS가 남는다. 비교는 무음이며 기본 전곡 설정은 바꾸지 않는다.
+
 ### MSE 격자 해상도와 후보 수 높이기
 
 최종 MS-SSIM은 그대로 두고 MSE 검색 격자를 16×12에서 32×24로 높이며, 후보는 격자마다 Top-512까지 넓힌다. 이미 저장한 특징을 사용하므로 새 수집·다운로드 없이 실행한다.
