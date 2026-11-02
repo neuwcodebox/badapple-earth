@@ -19,5 +19,8 @@
   "preset": "medium",
   "audio_mode": "source_local",
   "high_resolution_selected": true,
-  "extra_rgb_cache": "data/shape-v2/p4-100k"
+  "extra_rgb_cache": "data/shape-v2/p4-100k",
+  "selection_method": "ms-ssim",
+  "rerank_workers": 8,
+  "reuse_run": "data/runs/p6-full"
 }

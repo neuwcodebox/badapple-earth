@@ -2,7 +2,7 @@
 
 Bad Apple!!의 각 프레임과 형태·명암이 닮은 **실제 위성·항공사진 한 장**을 찾아 영상을 재구성하는 로컬 제작 도구다. 그림을 새로 생성하거나 여러 장소를 합성하지 않고, 실제 지구에서 촬영된 장면 자체를 검색한다.
 
-> **기본 제작은 원본의 모든 프레임을 사용하는 MSE 전곡 영상이다.** 16:9 화면에 작은 원본·세로 후보 5장·선택 연결선·큰 변환 사진·메타데이터를 배치하고 사진 전용 영상도 함께 만든다. 100만 장소·400만 회전 view를 재사용한다. 형태 검색은 비교 실험으로 보존하며 실제 실행 상태와 산출물은 [PLAN](docs/PLAN.md)에서 관리한다.
+> **기본 제작은 모든 원본 프레임의 MSE 후보 검색과 MS-SSIM 재평가다.** 16:9 화면에는 작은 원본·후보 다섯 장·선택 연결선·큰 사진을 배치한다. 시간·프레임·점수는 작게 정돈하고 좌표·촬영일을 한 줄로 표시한다. 100만 장소·400만 회전 view와 기존 영상 캐시를 재사용한다. 실제 실행·재생 평가 상태는 [PLAN](docs/PLAN.md)에서 관리한다.
 
 ## 주요 기능과 목표
 
@@ -40,12 +40,14 @@ uv run pytest -q --basetemp .local/pytest
 $env:OPENBLAS_NUM_THREADS = '8'
 $env:OMP_NUM_THREADS = '8'
 $env:NUMBA_NUM_THREADS = '8'
-uv run badapple-earth produce --config config/production.json --output data/runs/p6-full
+uv run badapple-earth produce --config config/production.json --output data/runs/p6-refined
 ```
 
 같은 명령으로 packing·검색·사진 준비·완료 인코딩 segment를 재사용하며 이어간다. `config/production.json`에서 입력·인덱스·로컬 글꼴·인코딩 작업 수·오디오를 조정한다. 기본 글꼴 캐시가 없으면 Windows Segoe UI 또는 사용 가능한 DejaVu Sans를 찾고, 없으면 직접 지정한다. 글꼴 파일은 Git에 포함하지 않는다.
 
-최종 출력은 `final-16x9.mp4`(1920×1080 검색 설명 화면), `satellite-full.mp4`(원래 콘텐츠 비율의 사진 전용), 대표 화면 `preview.png`, 전 프레임 `selected.parquet`와 `frame-plan.parquet`, 전체 Top-20의 `search/matches.parquet`, `credits.json`이다. 후보 목록에는 Top-20 view에서 서로 다른 장소 다섯 개를 표시하고 Top-1을 강조한다. 큰 사진 아래에는 실제 위경도·촬영일·소스·지상 범위를 넣는다.
+최종 출력은 `final-16x9.mp4`(1920×1080), `satellite-full.mp4`(원래 콘텐츠 비율의 사진 전용), `preview.png`, 전 프레임 `selected.parquet`·`frame-plan.parquet`, 전체 Top-20의 `search/matches.parquet`, `credits.json`이다. 후보는 MSE 순서대로 유지하고 MS-SSIM이 고른 위치를 강조한다. 타이틀·슬로건은 표시하지 않으며 시간·프레임 카운터·후보 점수와 사진 아래 좌표·촬영일만 간결하게 보여준다.
+
+`selection_method`는 `ms-ssim` 또는 비교용 `mse`다. 재평가 대상은 표시할 다섯 장소이며 점수의 동률은 MSE 순서를 유지한다. 기본 `reuse_run`은 앞서 완성한 `data/runs/p6-full`의 타깃·검색·사진 캐시를 재사용한다. 이 run이 없는 환경에서는 `reuse_run`을 지우고 실행한다. `rerank/`에는 모든 프레임의 후보별 점수·선택·재개 상태가 남는다. 새 방법의 작품성은 실제 영상을 비교해 판단한다.
 
 6,955개 원본 프레임을 모두 쓰고 30000/1001fps를 유지한다. 동일한 검색 특징은 계산만 공유하며 출력 프레임을 생략하거나 보간하지 않는다. 원본 AAC는 로컬 영상에 전체 복사하고, `audio_mode: "silent"`는 무음으로 만든다. 입력에 있는 약 65ms의 오디오 꼬리 때문에 영상 프레임을 추가하지 않는다. 이 경로는 현재 CFR·SAR 1:1 입력을 지원하며 외부 업로드는 하지 않는다.
 

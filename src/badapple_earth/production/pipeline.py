@@ -13,6 +13,7 @@ from ..matching.targets import targets
 from .assets import prepare
 from .render import render
 from .search import search
+from .reuse import reuse
 
 
 def produce(config, output: Path):
@@ -28,6 +29,7 @@ def produce(config, output: Path):
         previous = read_manifest(output) if path.exists() else None
         if previous and previous["production_id"] != production_id:
             raise ValueError("Production configuration changed; choose a new output path")
+        reuse(output, config)
         target = targets({key: config[key] for key in ("input", "crop", "frame_mode")}, output / "targets")
         if previous and previous["status"] == "complete" and all((output / name).exists() for name in ("final-16x9.mp4", "satellite-full.mp4")):
             return previous

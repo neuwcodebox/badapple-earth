@@ -12,7 +12,7 @@ from ..collection.windows import identity
 from ..evidence import write_json
 from . import layout
 
-LAYOUT_VERSION = "source-five-places-linked-hero-v1"
+LAYOUT_VERSION = "minimal-counters-dynamic-five-place-selection-v2"
 
 
 def absolute_plan(row, root):

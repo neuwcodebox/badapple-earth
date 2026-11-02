@@ -19,6 +19,7 @@ from ..matching.photos import PhotoCache
 from ..matching.views import rotate_image
 from ..sources.sentinel import safe_asset
 from .layout import location_caption
+from .rerank import VERSION as RERANK_VERSION, rerank
 
 
 def save_image(image, path):
@@ -145,6 +146,10 @@ def prepare(root: Path, config):
                 save_image(transformed, thumbs / f"{view['view_id']}.png")
             if (number + 1) % 500 == 0:
                 print(f"Candidate RGB: {number+1:,}/{len(by_tile):,} places", flush=True)
+    targets = pq.read_table(root / "targets/targets.parquet").to_pylist()
+    choices = rerank(root, targets, inverse, top, config)
+    selected = {top[int(query)][choice["selected_index"]]["view_id"]: top[int(query)][choice["selected_index"]]
+                for query, choice in zip(inverse, choices)}
     groups = defaultdict(list)
     for row in selected.values():
         if config.get("high_resolution_selected", True) and row["window"][2] > target["canonical_size"][0]:
@@ -164,10 +169,10 @@ def prepare(root: Path, config):
     frames, selections = [], []
     years = sorted({r["acquired_at"][:4] for r in thumbnails.values()})
     credit = "Contains modified Copernicus Sentinel data " + (years[0] if len(years) == 1 else f"{years[0]}–{years[-1]}")
-    targets = pq.read_table(root / "targets/targets.parquet").to_pylist()
-    for row, query in zip(targets, inverse):
+    for row, query, evaluation in zip(targets, inverse, choices):
         candidates = top[int(query)]
-        choice = candidates[0]
+        selected_index = evaluation["selected_index"]
+        choice = candidates[selected_index]
         image = hero / f"{choice['view_id']}.png"
         if not image.exists():
             image = thumbs / image.name
@@ -175,15 +180,22 @@ def prepare(root: Path, config):
                        "time": row["target_time"], "duration": target["duration_seconds"], "total": target["count"],
                        "places": search["candidate_count"], "source_image": f"targets/{row['frame']}",
                        "credit": credit,
+                       "selected_candidate": selected_index,
+                       "score_label": "MS-SSIM" if config.get("selection_method") == "ms-ssim" else "MSE",
                        "selected_image": image.relative_to(root).as_posix(), "caption": location_caption(choice),
                        "candidates": [{"path": (thumbs / f"{c['view_id']}.png").relative_to(root).as_posix(),
-                                       "rank": c["rank"], "raw_mse": c["raw_mse"], "view_id": c["view_id"]} for c in candidates]})
+                                       "rank": c["rank"], "raw_mse": c["raw_mse"], "view_id": c["view_id"],
+                                       "selection_score": score} for c, score in zip(candidates, evaluation["scores"])]})
         selections.append({**choice, "slot": row["slot"], "source_pts": row["source_pts"],
+                           "selected_candidate": selected_index, "selection_score": evaluation["scores"][selected_index],
+                           "selection_method": config.get("selection_method", "mse"),
                            "source_time_base": row["source_time_base"], "image": image.relative_to(root).as_posix()})
     selection_path = root / "selected.tmp.parquet"
     pq.write_table(pa.Table.from_pylist(selections), selection_path, compression="zstd")
     selection_path.replace(root / "selected.parquet")
     result = {"candidate_views": len(thumbnails), "selected_views": len(selected),
+              "selection_method": config.get("selection_method", "mse"),
+              "selection_version": RERANK_VERSION if config.get("selection_method") == "ms-ssim" else "gray-mse-[0,1]-v1",
               "selected_places": len({r["tile_id"] for r in selected.values()}), "native_results": audit,
               "native_detail_available": sum((hero / f"{key}.png").exists() for key in selected),
               "acquisition_years": years,
