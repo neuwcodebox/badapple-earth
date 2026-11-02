@@ -11,6 +11,7 @@ from ..collection.windows import identity
 from ..collection.bundle import members
 from ..evidence import write_json
 from .views import ANGLES, VIEW_VERSION, prepare_views, rotation_recipe
+from .distance import exact_sse
 
 
 def top_indices(scores: np.ndarray, ids: np.ndarray, k: int):
@@ -36,10 +37,9 @@ def match(target_root: Path, index_root: Path, output: Path, top_k=20,
         raise ValueError("Target and index feature shapes differ")
     if target_data.dtype != np.uint8 or len(target_rows) != len(target_data):
         raise ValueError("Target row mapping or dtype is invalid")
-    # Integral pixel distance avoids cancellation at near-identical candidates.
-    # Stored data remains uint8; distance accumulation fits int32 at this dimension.
-    matrix = target_data.reshape(len(target_rows), -1).astype(np.int32)
-    target_norm = np.sum(matrix * matrix, axis=1)
+    # BLAS dot products are exact integers at this dimension; norm arithmetic
+    # returns to integers before cancellation can affect near-identical views.
+    matrix = target_data.reshape(len(target_rows), -1)
     retained = [[] for _ in target_rows]
     sources = members(index_root, index_manifest)
     candidate_count = sum(sum(s["rows"] for s in m["shards"]) - len(excluded) for _, m, excluded in sources)
@@ -71,8 +71,8 @@ def match(target_root: Path, index_root: Path, output: Path, top_k=20,
             row["index_member"] = source_id
         for begin in range(0, len(rows), 8192):
             batch_rows = rows[begin:begin + 8192]
-            batch = np.asarray(data[begin:begin + 8192]).reshape(len(batch_rows), -1).astype(np.int32)
-            distance = target_norm[:, None] + np.sum(batch * batch, axis=1)[None, :] - 2 * (matrix @ batch.T)
+            batch = np.asarray(data[begin:begin + 8192]).reshape(len(batch_rows), -1)
+            distance = exact_sse(matrix, batch)
             ids = np.array([row.get("view_id", row["tile_id"]) for row in batch_rows])
             for target_number, scores in enumerate(distance):
                 keep = top_indices(scores, ids, top_k)
@@ -106,7 +106,7 @@ def match(target_root: Path, index_root: Path, output: Path, top_k=20,
                 "shard_ids": shard_ids, "index_members": [m["index_id"] for _, m, _ in sources],
                 "candidate_count": candidate_count, "view_count": view_count, "rotations": list(rotations),
                 "view_version": VIEW_VERSION, "top_k": top_k, "target_count": len(target_rows),
-                "metric": "gray-mse-[0,1]-v1", "accumulation": "exact int32 SSE, scaled to MSE",
+                "metric": "gray-mse-[0,1]-v1", "accumulation": "integer-exact BLAS dot and int64 SSE, scaled to MSE",
                 "tie_break": "view_id ascending", "best_mse_mean": float(np.mean(best)),
                 "best_mse_median": float(np.median(best)), "visual_review": "not_performed"}
     write_json(output / "manifest.json", manifest)
