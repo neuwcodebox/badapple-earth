@@ -226,6 +226,25 @@ uv run badapple-earth compare --baseline data/runs/p4-100k --run data/runs/p5-1m
 
 `collect-parallel`은 AOI를 결정적으로 분할해 독립 인덱스 네 개를 만들며 같은 명령으로 재개한다. 작업별 로그·설정과 전체 `collection.json`은 출력 폴더에 남긴다. 완료를 기다리는 동안 인덱스를 반복 스캔하지 않는다. 각 작업의 RAM 예산은 3GiB, 디스크 예산은 55GiB이고 모든 작업은 같은 드라이브의 여유 공간 하한 20GiB를 지킨다. 신규 RGB 자체는 약 126GiB를 차지하므로 기존 실행보다 저장 공간이 많이 필요하다. 수집 중 RGB·네 방향 특징을 함께 저장하고 사진 출력에서 재사용한다. RGB를 보관하는 수집에서는 AOI 처리를 마치면 재생 가능한 원본 블록 캐시를 비워 중복 저장량을 제한한다. 이후 quota를 늘릴 때 아직 수집하지 않은 창의 원본을 다시 읽을 수 있다. 실제 수집·비교 완료 여부는 [PLAN](docs/PLAN.md)에서 확인한다.
 
+### 항공사진으로 후보 풀 보강
+
+NAIP·LINZ는 기존 수집·재개·RGB 캐시를 사용한다. 두 명령을 별도 터미널에서 실행하면 소스별 두 작업, 총 네 작업이 동작한다. 각 소스의 초기 목표는 10만 후보이며 완료 상태와 실제 수량은 `collection.json`, 세부 로그는 `part-01.log`·`part-02.log`에 남는다.
+
+```bash
+uv run badapple-earth collect-parallel --config config/collect-naip.json --output data/index/p5-naip-100k --limit 100000 --workers 2
+uv run badapple-earth collect-parallel --config config/collect-linz.json --output data/index/p5-linz-100k --limit 100000 --workers 2
+```
+
+NAIP는 Microsoft Planetary Computer의 익명 임시 SAS, LINZ는 공개 HTTPS를 사용한다. 사용자 키나 AWS Requester Pays를 활성화하지 않는다. LINZ는 30cm 촬영 사업을 사용하며 6cm 도시 자료는 초기 대량 계획에 포함하지 않는다. RGB·실제 밴드·유효 마스크·촬영 단일 시점/구간·출처를 보존하고 구름 품질은 미평가로 구분한다. 세부 정책은 [TECH의 항공사진 소스](docs/TECH.md#22-naip--조건부-고해상도-보강)를 따른다.
+
+두 소스가 각각 10만 개로 완료되면 기존 100만과 네 작업 인덱스를 참조해 결합한다. 부분 결과를 완성된 120만으로 표시하지 않는다.
+
+```bash
+uv run badapple-earth combine --index data/index/p5-1m --index data/index/p5-naip-100k/part-01 --index data/index/p5-naip-100k/part-02 --index data/index/p5-linz-100k/part-01 --index data/index/p5-linz-100k/part-02 --output data/index/p5-aerial-1.2m
+```
+
+현재 실행 상태·자원·비교 여부는 [PLAN](docs/PLAN.md), 실제 경위는 [수집 기록](docs/history/2026-11-03-P5-aerial-collection.md)에 둔다. 새 인덱스를 기존 전곡이나 Astra 선택에 자동 적용하지 않는다.
+
 ### 7. 선택 실험: 형태 우선 검색과 같은 구간 비교
 
 기존 후보 풀의 전체 view에 PHOG·Rank-layout 검색과 다중 임곗값 SDF·영역·양방향 방향성 Chamfer를 적용한다. 형태가 거의 같은 후보 사이에서 실제 사진 광도로 선택한다. MSE로 앞단 후보를 제한하지 않으며 원색 사진은 분석용 마스크로 바꾸지 않는다.

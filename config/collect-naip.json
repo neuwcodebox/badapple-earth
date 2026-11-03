@@ -1,0 +1,398 @@
+{
+  "requester_pays": false,
+  "widths": [
+    256,
+    512,
+    1024,
+    2048
+  ],
+  "scale_weights": [
+    20,
+    30,
+    35,
+    15
+  ],
+  "aspect_ratio": [
+    1444,
+    1080
+  ],
+  "preview_width": 256,
+  "max_cloud_ratio": 0.02,
+  "stride_fraction": 0.5,
+  "block_size": 2048,
+  "seed": 43,
+  "report_samples": 200,
+  "collect_rotations": true,
+  "cache_rgb": true,
+  "max_memory_mb": 3072,
+  "max_disk_mb": 24576,
+  "min_free_disk_mb": 20480,
+  "max_block_attempts": 3,
+  "max_blocks_per_scene": 48,
+  "source": "planetarycomputer-naip",
+  "datetime": "2015-01-01/2023-12-31",
+  "scenes_per_aoi": 6,
+  "catalog_limit_per_aoi": 100,
+  "areas": [
+    {
+      "id": "naip-urban-salt-lake",
+      "terrain_group": "urban",
+      "bbox": [
+        -112.07,
+        40.45,
+        -111.83,
+        40.65
+      ]
+    },
+    {
+      "id": "naip-urban-phoenix",
+      "terrain_group": "urban",
+      "bbox": [
+        -112.2,
+        33.4,
+        -111.96,
+        33.6
+      ]
+    },
+    {
+      "id": "naip-urban-sacramento",
+      "terrain_group": "urban",
+      "bbox": [
+        -121.57,
+        38.48,
+        -121.33,
+        38.68
+      ]
+    },
+    {
+      "id": "naip-urban-denver",
+      "terrain_group": "urban",
+      "bbox": [
+        -105.07,
+        39.62,
+        -104.83,
+        39.82
+      ]
+    },
+    {
+      "id": "naip-urban-dallas",
+      "terrain_group": "urban",
+      "bbox": [
+        -96.9,
+        32.75,
+        -96.66,
+        32.95
+      ]
+    },
+    {
+      "id": "naip-urban-atlanta",
+      "terrain_group": "urban",
+      "bbox": [
+        -84.51,
+        33.67,
+        -84.27,
+        33.87
+      ]
+    },
+    {
+      "id": "naip-agriculture-idaho",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -116.68,
+        43.54,
+        -116.44,
+        43.74
+      ]
+    },
+    {
+      "id": "naip-agriculture-iowa",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -93.72,
+        42.0,
+        -93.48,
+        42.2
+      ]
+    },
+    {
+      "id": "naip-agriculture-nebraska",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -99.52,
+        40.7,
+        -99.28,
+        40.9
+      ]
+    },
+    {
+      "id": "naip-agriculture-kansas",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -98.32,
+        38.0,
+        -98.08,
+        38.2
+      ]
+    },
+    {
+      "id": "naip-agriculture-central-california",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -120.22,
+        36.3,
+        -119.98,
+        36.5
+      ]
+    },
+    {
+      "id": "naip-agriculture-washington",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -119.67,
+        46.25,
+        -119.43,
+        46.45
+      ]
+    },
+    {
+      "id": "naip-forest-oregon",
+      "terrain_group": "forest",
+      "bbox": [
+        -123.52,
+        44.4,
+        -123.28,
+        44.6
+      ]
+    },
+    {
+      "id": "naip-forest-vermont",
+      "terrain_group": "forest",
+      "bbox": [
+        -72.72,
+        43.9,
+        -72.48,
+        44.1
+      ]
+    },
+    {
+      "id": "naip-forest-maine",
+      "terrain_group": "forest",
+      "bbox": [
+        -69.62,
+        44.9,
+        -69.38,
+        45.1
+      ]
+    },
+    {
+      "id": "naip-forest-michigan",
+      "terrain_group": "forest",
+      "bbox": [
+        -85.12,
+        44.4,
+        -84.88,
+        44.6
+      ]
+    },
+    {
+      "id": "naip-forest-north-carolina",
+      "terrain_group": "forest",
+      "bbox": [
+        -82.52,
+        35.5,
+        -82.28,
+        35.7
+      ]
+    },
+    {
+      "id": "naip-forest-arkansas",
+      "terrain_group": "forest",
+      "bbox": [
+        -93.42,
+        34.7,
+        -93.18,
+        34.9
+      ]
+    },
+    {
+      "id": "naip-river-mississippi",
+      "terrain_group": "river",
+      "bbox": [
+        -91.27,
+        32.2,
+        -91.03,
+        32.4
+      ]
+    },
+    {
+      "id": "naip-river-missouri",
+      "terrain_group": "river",
+      "bbox": [
+        -95.02,
+        39.2,
+        -94.78,
+        39.4
+      ]
+    },
+    {
+      "id": "naip-river-columbia",
+      "terrain_group": "river",
+      "bbox": [
+        -121.62,
+        45.6,
+        -121.38,
+        45.8
+      ]
+    },
+    {
+      "id": "naip-river-sacramento-delta",
+      "terrain_group": "river",
+      "bbox": [
+        -121.72,
+        38.0,
+        -121.48,
+        38.2
+      ]
+    },
+    {
+      "id": "naip-river-tennessee",
+      "terrain_group": "river",
+      "bbox": [
+        -85.72,
+        34.9,
+        -85.48,
+        35.1
+      ]
+    },
+    {
+      "id": "naip-river-ohio",
+      "terrain_group": "river",
+      "bbox": [
+        -83.12,
+        38.6,
+        -82.88,
+        38.8
+      ]
+    },
+    {
+      "id": "naip-coast-monterey",
+      "terrain_group": "coast",
+      "bbox": [
+        -121.92,
+        36.7,
+        -121.68,
+        36.9
+      ]
+    },
+    {
+      "id": "naip-coast-florida",
+      "terrain_group": "coast",
+      "bbox": [
+        -81.12,
+        29.1,
+        -80.88,
+        29.3
+      ]
+    },
+    {
+      "id": "naip-coast-louisiana",
+      "terrain_group": "coast",
+      "bbox": [
+        -90.32,
+        29.4,
+        -90.08,
+        29.6
+      ]
+    },
+    {
+      "id": "naip-coast-north-carolina",
+      "terrain_group": "coast",
+      "bbox": [
+        -76.72,
+        35.1,
+        -76.48,
+        35.3
+      ]
+    },
+    {
+      "id": "naip-coast-oregon",
+      "terrain_group": "coast",
+      "bbox": [
+        -124.22,
+        43.4,
+        -123.98,
+        43.6
+      ]
+    },
+    {
+      "id": "naip-coast-maine",
+      "terrain_group": "coast",
+      "bbox": [
+        -68.62,
+        44.3,
+        -68.38,
+        44.5
+      ]
+    },
+    {
+      "id": "naip-dryland-utah",
+      "terrain_group": "dryland",
+      "bbox": [
+        -110.72,
+        38.5,
+        -110.48,
+        38.7
+      ]
+    },
+    {
+      "id": "naip-dryland-nevada",
+      "terrain_group": "dryland",
+      "bbox": [
+        -115.32,
+        36.2,
+        -115.08,
+        36.4
+      ]
+    },
+    {
+      "id": "naip-dryland-arizona",
+      "terrain_group": "dryland",
+      "bbox": [
+        -111.62,
+        34.9,
+        -111.38,
+        35.1
+      ]
+    },
+    {
+      "id": "naip-dryland-new-mexico",
+      "terrain_group": "dryland",
+      "bbox": [
+        -106.72,
+        34.1,
+        -106.48,
+        34.3
+      ]
+    },
+    {
+      "id": "naip-dryland-texas",
+      "terrain_group": "dryland",
+      "bbox": [
+        -103.52,
+        30.4,
+        -103.28,
+        30.6
+      ]
+    },
+    {
+      "id": "naip-dryland-wyoming",
+      "terrain_group": "dryland",
+      "bbox": [
+        -108.32,
+        42.9,
+        -108.08,
+        43.1
+      ]
+    }
+  ]
+}

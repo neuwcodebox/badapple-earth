@@ -1,4 +1,4 @@
-"""Bounded, resumable real Sentinel-2 collection for reusable CPU search."""
+"""Bounded, resumable real imagery collection for reusable CPU search."""
 
 from datetime import datetime, timedelta, timezone
 import heapq
@@ -23,6 +23,7 @@ from ..features import EXTRACTION_VERSION, canonical_image, extract
 from ..imagery import QUALITY_POLICY, SceneReader, quality_tables, window_quality, window_location
 from ..sample import validate_config as validate_sample_config
 from ..sources.sentinel import discover, safe_asset
+from ..sources import aerial
 from .storage import Index, writer_lock
 from .windows import allocate, area_quotas, blocks, identity, refill_limits, slices
 
@@ -33,7 +34,16 @@ class ResourceLimit(ValueError):
 
 def validate_config(config: dict):
     # Reuse the geometry/pixel budget checks already used for small source reads.
-    validate_sample_config({**config, "scene_attempts_per_aoi": config["scenes_per_aoi"]}, 1)
+    if config.get("source") in aerial.SOURCES:
+        if type(config["scenes_per_aoi"]) is not int or not 1 <= config["scenes_per_aoi"] <= 32:
+            raise ValueError("Aerial scenes_per_aoi must be between 1 and 32")
+        if type(config["catalog_limit_per_aoi"]) is not int or not config["scenes_per_aoi"] <= config["catalog_limit_per_aoi"] <= 100:
+            raise ValueError("Aerial catalogue limit must be between scenes_per_aoi and 100")
+        if not config.get("cache_rgb"):
+            raise ValueError("Aerial collection requires reusable RGB caching")
+        validate_sample_config({**config, "scene_attempts_per_aoi": min(3, config["scenes_per_aoi"])}, 1)
+    else:
+        validate_sample_config({**config, "scene_attempts_per_aoi": config["scenes_per_aoi"]}, 1)
     for name, low, high in [("block_size", 256, 4096), ("report_samples", 1, 200),
                             ("max_memory_mb", 256, 65536), ("max_disk_mb", 64, 1048576),
                             ("min_free_disk_mb", 64, 1048576), ("max_block_attempts", 1, 5),
@@ -58,13 +68,14 @@ def catalog(root: Path, config: dict):
         if area_path.exists():
             result = json.loads(area_path.read_text(encoding="utf-8"))
         else:
-            result = discover(config, area)
+            result = (aerial.discover(config, area, root / "catalog/source")
+                      if config.get("source") in aerial.SOURCES else discover(config, area))
             write_json(area_path, result)
         catalogs.append(result)
         chosen, spatial = [], set()
         for scene in result["candidates"]:
             # Sentinel IDs contain the stable MGRS tile after the first underscore.
-            tile = scene["item_id"].split("_")[1]
+            tile = scene["spatial_id"] if "spatial_id" in scene else scene["item_id"].split("_")[1]
             if tile in spatial:
                 continue
             spatial.add(tile)
@@ -73,7 +84,9 @@ def catalog(root: Path, config: dict):
                 break
         selected[area["id"]] = chosen
     result = {"catalogs": catalogs, "selected": selected,
-              "selection": "AOI coverage, cloud cover, one acquisition per MGRS tile"}
+              "selection": ("source-specific bounded discovery; one acquisition per spatial ID"
+                            if config.get("source") in aerial.SOURCES
+                            else "AOI coverage, cloud cover, one acquisition per MGRS tile")}
     write_json(path, result)
     scenes = {scene["item_id"]: scene for items in selected.values() for scene in items}
     pq.write_table(pa.Table.from_pylist([{"scene_id": key, "metadata_json": json.dumps(value)}
@@ -107,15 +120,29 @@ def cached_block(index: Index, reader: SceneReader, plan: dict):
     if path.exists():
         with np.load(path, allow_pickle=False) as data:
             rgb, valid, scl = data["rgb"], data["valid"], data["scl"]
+            if not scl.size:
+                scl = None
             if "mask_policy" not in data and getattr(reader, "zero_nodata_masks", False):
                 valid = np.any(rgb != 0, axis=0)
             return rgb, valid, scl
     rgb, valid, scl = reader.read_block(Window(*plan["read_window"]))
     temporary = path.with_suffix(".tmp")
     with temporary.open("wb") as stream:
-        np.savez_compressed(stream, rgb=rgb, valid=valid, scl=scl, mask_policy=np.array(QUALITY_POLICY))
+        np.savez_compressed(stream, rgb=rgb, valid=valid,
+                            scl=scl if scl is not None else np.empty(0, np.uint8),
+                            mask_policy=np.array(scene_policy(reader)))
     temporary.replace(path)
     return rgb, valid, scl
+
+
+def scene_policy(reader):
+    return reader.metadata.get("quality_policy", QUALITY_POLICY)
+
+
+def open_scene(scene):
+    if scene["source_id"] in aerial.SOURCES:
+        return aerial.AerialReader(scene)
+    return SceneReader(safe_asset(scene["visual"]), safe_asset(scene["scl"]))
 
 
 def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
@@ -197,14 +224,20 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
         row = {
             "tile_id": tile_id, "view_id": tile_id, "scene_id": scene["item_id"],
             "source_id": scene["source_id"], "collection_id": scene["collection_id"],
-            "asset_key": "visual", "acquired_at": scene["acquired_at"],
+            "asset_key": scene.get("asset_key", "visual"), "acquired_at": scene["acquired_at"],
+            "acquired_start": scene.get("acquired_start"), "acquired_end": scene.get("acquired_end"),
+            "source_item_id": scene.get("source_item_id", scene["item_id"]),
+            "source_asset_href": scene["visual"],
+            "source_license": scene.get("license"),
+            "source_licensors": [p["name"] for p in scene.get("providers", []) if "licensor" in p.get("roles", [])],
             "aoi_id": area["id"], "terrain_group": area["terrain_group"], "window": window,
             "longitude": location["longitude"], "latitude": location["latitude"],
             "footprint_json": json.dumps(location["footprint"]),
             "ground_width_m": ground_width, "ground_height_m": ground_height,
             "source_gsd": list(reader.src.res), "valid_ratio": quality["valid_ratio"],
-            "local_cloud_ratio": quality["local_cloud_ratio"], "cloud_quality": "scl",
-            "quality_policy": QUALITY_POLICY,
+            "local_cloud_ratio": quality["local_cloud_ratio"],
+            "cloud_quality": "unassessed" if scl is None else "scl",
+            "quality_policy": scene_policy(reader),
             "gray_mean": float(coarse.mean()), "gray_std": float(coarse.std()),
             "uniform": float(coarse.std()) < 2, "dhash": dhash, "near_duplicate_of": near,
             "extraction_version": EXTRACTION_VERSION, "rotation_degrees": 0,
@@ -295,7 +328,7 @@ def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int
                             plan_path = root / "catalog" / f"{area['id']}-{scene['item_id']}.json"
                             print(f"Collecting {area['id']}: {scene['item_id']}", flush=True)
                             try:
-                                with SceneReader(safe_asset(scene["visual"]), safe_asset(scene["scl"])) as reader:
+                                with open_scene(scene) as reader:
                                     metadata_path = root / "catalog" / (scene["item_id"] + ".json")
                                     if not metadata_path.exists():
                                         write_json(metadata_path, {**scene, **reader.metadata})
@@ -304,8 +337,11 @@ def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int
                                     else:
                                         # Rank useful terrain before requesting large RGB blocks.
                                         # This coarse SCL view is a planning hint, not the final quality test.
-                                        scl_hint = reader.scl.read(1, out_shape=(256, 256), resampling=Resampling.nearest)
-                                        potential = ~np.isin(scl_hint, [0, 1, 3, 8, 9, 10])
+                                        if reader.scl is not None:
+                                            scl_hint = reader.scl.read(1, out_shape=(256, 256), resampling=Resampling.nearest)
+                                            potential = ~np.isin(scl_hint, [0, 1, 3, 8, 9, 10])
+                                        else:
+                                            potential = reader.src.dataset_mask(out_shape=(256, 256)) > 0
                                         rgb_hint = reader.src.read_masks((1, 2, 3), out_shape=(3, 256, 256))
                                         potential &= np.any(rgb_hint > 0, axis=0)
                                         plans = [p for p in blocks(reader.src, scene, area, config, potential)
@@ -365,7 +401,7 @@ def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int
             index.manifest["elapsed_seconds_last_run"] = round(time.monotonic() - started, 3)
             index.manifest["network_requests"] = "unmeasured"
             index.manifest["network_bytes"] = "unmeasured"
-            index.manifest["quality_policy"] = QUALITY_POLICY
+            index.manifest["quality_policy"] = aerial.QUALITY_POLICY if config.get("source") in aerial.SOURCES else QUALITY_POLICY
             index.manifest["scale_quota_policy"] = "equal shares first; remaining AOI quota can use other valid scales"
             write_json(root / "manifest.json", index.manifest)
             index.close()

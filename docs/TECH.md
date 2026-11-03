@@ -115,7 +115,13 @@ Planetary Computer는 `planetary_computer.sign` 또는 `sign_inplace`를 사용�
 
 검증한 자료는 RGB+alpha의 4밴드 uint8·WebP 압축 COG다. RGB는 1·2·3번을 사용하고 유효성에는 alpha가 반영된 dataset mask를 쓴다. 기존 Rasterio/GDAL 환경에서 디코딩을 확인했다. 확장자가 `.tiff`일 수 있고 asset에 선택 필드인 `roles`가 없을 수 있다. `datetime=null`이면 `start_datetime`·`end_datetime` 촬영 구간을 보존하고 임의의 단일 촬영일로 바꾸지 않는다. 검증한 세 컬렉션의 라이선스는 CC-BY-4.0이며 실제 licensor는 각 컬렉션의 provider에서 추적한다.
 
-NAIP와 LINZ에는 Sentinel-2 SCL이 없으므로 이를 합성하거나 구름 비율 0으로 보고하지 않는다. 소스별 품질 정책, 촬영 시간 표현, 원본 밴드와 해상도를 반영하는 수집기 연결은 미구현이다. 접근 검증의 실제 장면·창·결과는 [항공사진 접근 기록](history/2026-11-02-P5-aerial-access.md)에 둔다.
+NAIP와 LINZ에는 Sentinel-2 SCL이 없으므로 이를 합성하거나 구름 비율 0으로 보고하지 않는다. `aerial-rgb-dataset-mask-unassessed-cloud-v1` 정책은 dataset mask의 완전 유효 창만 채택하고 `local_cloud_ratio=null`, `cloud_quality=unassessed`로 저장한다. 유효한 저대비 지형은 유지한다. 구름 검출이나 전수 시각 검증을 수행한 정책으로 해석하지 않는다.
+
+기존 `collect`·`collect-parallel`의 설정 `source`로 `planetarycomputer-naip` 또는 `linz-imagery`를 지정한다. `sources/aerial.py`가 공개 카탈로그·자산을 해석하고, 기존 블록·체크포인트·RGB shard·직각 회전 특징을 함께 저장한다. 항공사진에서는 `cache_rgb=true`가 필수다. NAIP는 최신 촬영분을 우선하며 같은 quarter-quad의 중복 촬영을 제한한다. LINZ는 명시한 collection의 item 링크를 seed 기반으로 섞어 제한된 수만 조회하고, collection·원본 item ID를 함께 보존하며 반복되는 도엽 ID를 지역 장면 ID로 구분한다. 카탈로그 한도는 조사한 범위이며 전체 데이터 소진과 구분한다.
+
+초기 수집 설정은 NAIP 36개 AOI와 LINZ 23개 0.3m 촬영 사업이다. 256/512/1024/2048px 창으로 NAIP 0.6m 자료에서 약 154–1229m, LINZ 0.3m 자료에서 약 77–614m를 탐색한다. 6cm 도시 자료는 이번 대량 계획에 포함하지 않는다. 원본 밴드·mask·CRS·지상 범위·촬영 구간·licensor와 실제 변환을 저장하며 검색 결과의 서로 다른 소스별 선택 필드도 보존한다. 구간 비교의 크레딧은 선택한 Sentinel-2/NAIP/LINZ와 실제 licensor를 반영한다. 기존 전곡 제작 설정은 자동 변경하지 않는다.
+
+접근 검증의 실제 장면·창은 [접근 기록](history/2026-11-02-P5-aerial-access.md), 구현·대량 수집·계측 상태는 [수집 기록](history/2026-11-03-P5-aerial-collection.md)에 둔다.
 
 #### 2.4 후순위 소스와 공통 규칙
 

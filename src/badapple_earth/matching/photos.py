@@ -119,8 +119,10 @@ class PhotoCache:
             return canonical_image(self.cached_rgb[:, sy, sx], tuple(self.manifest["canonical_size"]))
         if tile["scene_id"] not in self.readers:
             scene = self.scene(tile["scene_id"])
-            self.readers[tile["scene_id"]] = self.stack.enter_context(
-                SceneReader(safe_asset(scene["visual"]), safe_asset(scene["scl"])))
+            from ..sources.aerial import SOURCES, AerialReader
+            reader = (AerialReader(scene) if scene["source_id"] in SOURCES
+                      else SceneReader(safe_asset(scene["visual"]), safe_asset(scene["scl"])))
+            self.readers[tile["scene_id"]] = self.stack.enter_context(reader)
         rgb, valid, scl = self.readers[tile["scene_id"]].read_block(Window(*tile["window"]))
         quality = check_quality(valid, scl, self.manifest["config"]["max_cloud_ratio"])
         if quality["reasons"]:

@@ -77,6 +77,8 @@ def test_mixed_old_and_rgb_cached_indexes_keep_cache_references_in_search_result
         row = {"tile_id": name, "feature_row": 0}
         if name == "cached":
             row.update(rgb_cache_ref="shards/one/rgb.npy", rgb_cache_row=0)
+            row.update(acquired_start="2023-01-01", acquired_end="2023-01-03",
+                       source_licensors=["Regional Council"])
         pq.write_table(pa.Table.from_pylist([row]), shard / "tiles.parquet")
         np.save(shard / "gray_coarse.npy", np.full((1, 12, 16), value, np.uint8))
         (root / "manifest.json").write_text(json.dumps({
@@ -93,3 +95,5 @@ def test_mixed_old_and_rgb_cached_indexes_keep_cache_references_in_search_result
     rows = pq.read_table(tmp_path / "run/matches.parquet").to_pylist()
     assert rows[0]["tile_id"] == "old" and rows[0]["rgb_cache_ref"] is None
     assert rows[1]["rgb_cache_ref"] == "shards/one/rgb.npy" and rows[1]["rgb_cache_row"] == 0
+    assert rows[1]["acquired_end"] == "2023-01-03"
+    assert rows[1]["source_licensors"] == ["Regional Council"]

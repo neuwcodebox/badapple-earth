@@ -1,0 +1,313 @@
+{
+  "requester_pays": false,
+  "widths": [
+    256,
+    512,
+    1024,
+    2048
+  ],
+  "scale_weights": [
+    20,
+    30,
+    35,
+    15
+  ],
+  "aspect_ratio": [
+    1444,
+    1080
+  ],
+  "preview_width": 256,
+  "max_cloud_ratio": 0.02,
+  "stride_fraction": 0.5,
+  "block_size": 2048,
+  "seed": 43,
+  "report_samples": 200,
+  "collect_rotations": true,
+  "cache_rgb": true,
+  "max_memory_mb": 3072,
+  "max_disk_mb": 24576,
+  "min_free_disk_mb": 20480,
+  "max_block_attempts": 3,
+  "max_blocks_per_scene": 48,
+  "source": "linz-imagery",
+  "scenes_per_aoi": 12,
+  "catalog_limit_per_aoi": 20,
+  "areas": [
+    {
+      "id": "linz-bay-of-plenty-01",
+      "terrain_group": "bay-of-plenty",
+      "bbox": [
+        177.0823621,
+        -38.280066,
+        178.082077,
+        -37.5281811
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/bay-of-plenty/bay-of-plenty_2019_0.3m/rgb/2193/collection.json",
+      "collection_title": "Bay of Plenty 0.3m Rural Aerial Photos (2019)"
+    },
+    {
+      "id": "linz-bay-of-plenty-02",
+      "terrain_group": "bay-of-plenty",
+      "bbox": [
+        175.7954587,
+        -39.0168413,
+        178.1994095,
+        -37.2353163
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/bay-of-plenty/bay-of-plenty_2016-2017_0.3m/rgb/2193/collection.json",
+      "collection_title": "Bay of Plenty 0.3m Rural Aerial Photos (2016-2017)"
+    },
+    {
+      "id": "linz-canterbury-03",
+      "terrain_group": "canterbury",
+      "bbox": [
+        170.1407482,
+        -45.6557846,
+        171.2099186,
+        -44.2590364
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/canterbury/waitaki_2021_0.3m/rgb/2193/collection.json",
+      "collection_title": "Waitaki 0.3m Rural Aerial Photos (2021)"
+    },
+    {
+      "id": "linz-canterbury-04",
+      "terrain_group": "canterbury",
+      "bbox": [
+        169.5794922,
+        -44.70234,
+        170.7954319,
+        -43.6767732
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/canterbury/mackenzie_2021_0.3m/rgb/2193/collection.json",
+      "collection_title": "Mackenzie 0.3m Rural Aerial Photos (2021)"
+    },
+    {
+      "id": "linz-gisborne-05",
+      "terrain_group": "gisborne",
+      "bbox": [
+        177.1042804,
+        -38.9966205,
+        178.5789163,
+        -37.5174346
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/gisborne/gisborne_2017-2019_0.3m/rgb/2193/collection.json",
+      "collection_title": "Gisborne 0.3m Rural Aerial Photos (2017-2019)"
+    },
+    {
+      "id": "linz-hawkes-bay-06",
+      "terrain_group": "hawkes-bay",
+      "bbox": [
+        176.0358006,
+        -40.4407184,
+        178.0237405,
+        -38.5683905
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/hawkes-bay/hawkes-bay_2021-2022_0.3m/rgb/2193/collection.json",
+      "collection_title": "Hawke's Bay 0.3m Rural Aerial Photos (2021-2022)"
+    },
+    {
+      "id": "linz-hawkes-bay-07",
+      "terrain_group": "hawkes-bay",
+      "bbox": [
+        175.995564,
+        -40.5071447,
+        178.0283496,
+        -38.533055
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/hawkes-bay/hawkes-bay_2019-2020_0.3m/rgb/2193/collection.json",
+      "collection_title": "Hawke's Bay 0.3m Rural Aerial Photos (2019-2020)"
+    },
+    {
+      "id": "linz-manawatu-whanganui-08",
+      "terrain_group": "manawatu-whanganui",
+      "bbox": [
+        174.6649364,
+        -40.8034341,
+        176.681633,
+        -38.4532011
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/manawatu-whanganui/manawatu-whanganui_2021-2022_0.3m/rgb/2193/collection.json",
+      "collection_title": "Manawatū-Whanganui 0.3m Rural Aerial Photos (2021-2022)"
+    },
+    {
+      "id": "linz-manawatu-whanganui-09",
+      "terrain_group": "manawatu-whanganui",
+      "bbox": [
+        174.6649364,
+        -39.989084,
+        175.6883336,
+        -38.4532011
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/manawatu-whanganui/manawatu-whanganui_2016-2017_0.3m/rgb/2193/collection.json",
+      "collection_title": "Manawatū-Whanganui 0.3m Rural Aerial Photos (2016-2017)"
+    },
+    {
+      "id": "linz-marlborough-10",
+      "terrain_group": "marlborough",
+      "bbox": [
+        173.0287974,
+        -41.6921453,
+        174.4582684,
+        -40.6499379
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/marlborough/marlborough_2017-2018_0.3m/rgb/2193/collection.json",
+      "collection_title": "Marlborough 0.3m Rural Aerial Photos (2017-2018)"
+    },
+    {
+      "id": "linz-nelson-11",
+      "terrain_group": "nelson",
+      "bbox": [
+        173.1719264,
+        -41.4001631,
+        173.6011333,
+        -41.0420661
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/nelson/nelson_2018-2019_0.3m/rgb/2193/collection.json",
+      "collection_title": "Nelson 0.3m Rural Aerial Photos (2018-2019)"
+    },
+    {
+      "id": "linz-northland-12",
+      "terrain_group": "northland",
+      "bbox": [
+        172.6079116,
+        -36.4324847,
+        174.8084793,
+        -34.3593284
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/northland/northland_2023-2024_0.3m/rgb/2193/collection.json",
+      "collection_title": "Northland 0.3m Rural Aerial Photos (2023-2025)"
+    },
+    {
+      "id": "linz-otago-13",
+      "terrain_group": "otago",
+      "bbox": [
+        168.6403978,
+        -46.691381,
+        170.5305003,
+        -44.3599714
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/otago/otago_2019-2021_0.3m/rgb/2193/collection.json",
+      "collection_title": "Otago 0.3m Rural Aerial Photos (2019-2021)"
+    },
+    {
+      "id": "linz-otago-14",
+      "terrain_group": "otago",
+      "bbox": [
+        167.9797132,
+        -46.1317203,
+        170.8410772,
+        -43.8774483
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/otago/otago_2017-2019_0.3m/rgb/2193/collection.json",
+      "collection_title": "Otago 0.3m Rural Aerial Photos (2017-2019)"
+    },
+    {
+      "id": "linz-taranaki-15",
+      "terrain_group": "taranaki",
+      "bbox": [
+        173.740005,
+        -39.8765518,
+        175.0709866,
+        -38.6970509
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/taranaki/taranaki_2016-2018_0.3m/rgb/2193/collection.json",
+      "collection_title": "Taranaki 0.3m Rural Aerial Photos (2016-2018)"
+    },
+    {
+      "id": "linz-tasman-16",
+      "terrain_group": "tasman",
+      "bbox": [
+        172.459042,
+        -41.5300468,
+        173.2585295,
+        -40.4916196
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/tasman/tasman_2022_0.3m/rgb/2193/collection.json",
+      "collection_title": "Tasman 0.3m Rural Aerial Photos (2022)"
+    },
+    {
+      "id": "linz-tasman-17",
+      "terrain_group": "tasman",
+      "bbox": [
+        172.0140185,
+        -42.3395863,
+        173.0577105,
+        -41.3339074
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/tasman/tasman_2020_0.3m/rgb/2193/collection.json",
+      "collection_title": "Tasman 0.3m Rural Aerial Photos (2020)"
+    },
+    {
+      "id": "linz-waikato-18",
+      "terrain_group": "waikato",
+      "bbox": [
+        174.5731104,
+        -38.8237518,
+        176.1276692,
+        -36.3811521
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/waikato/waikato_2023-2024_0.3m/rgb/2193/collection.json",
+      "collection_title": "Waikato 0.3m Rural Aerial Photos (2023-2024)"
+    },
+    {
+      "id": "linz-waikato-19",
+      "terrain_group": "waikato",
+      "bbox": [
+        174.5297583,
+        -39.329461,
+        176.7120508,
+        -36.3811521
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/waikato/waikato_2021-2023_0.3m/rgb/2193/collection.json",
+      "collection_title": "Waikato 0.3m Rural Aerial Photos (2021-2024)"
+    },
+    {
+      "id": "linz-wellington-20",
+      "terrain_group": "wellington",
+      "bbox": [
+        174.6035556,
+        -41.6383317,
+        176.3536955,
+        -40.6407393
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/wellington/wellington_2021_0.3m/rgb/2193/collection.json",
+      "collection_title": "Wellington 0.3m Rural Aerial Photos (2021)"
+    },
+    {
+      "id": "linz-wellington-21",
+      "terrain_group": "wellington",
+      "bbox": [
+        174.6035556,
+        -41.6383317,
+        176.3536955,
+        -40.6407393
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/wellington/wellington_2016-2017_0.3m/rgb/2193/collection.json",
+      "collection_title": "Wellington 0.3m Rural Aerial Photos (2016-2017)"
+    },
+    {
+      "id": "linz-west-coast-22",
+      "terrain_group": "west-coast",
+      "bbox": [
+        168.4401054,
+        -44.1499927,
+        171.8561655,
+        -42.4879949
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/west-coast/west-coast_2016-2017_0.3m/rgb/2193/collection.json",
+      "collection_title": "West Coast 0.3m Rural Aerial Photos (2016-2017)"
+    },
+    {
+      "id": "linz-west-coast-23",
+      "terrain_group": "west-coast",
+      "bbox": [
+        171.0666438,
+        -42.8479877,
+        172.4274907,
+        -41.0724292
+      ],
+      "collection_url": "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/west-coast/west-coast_2015-2016_0.3m/rgb/2193/collection.json",
+      "collection_title": "West Coast 0.3m Rural Aerial Photos (2015-2016)"
+    }
+  ]
+}

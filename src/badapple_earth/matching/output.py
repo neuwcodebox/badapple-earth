@@ -55,6 +55,11 @@ def materialize(target_root: Path, index_root: Path, run_root: Path):
                                      "error_type": type(error).__name__})
             if chosen is None:
                 raise ValueError(f"No candidate could be materialized for target slot {slot}")
+            if chosen.get("source_id") == "linz-imagery" and not chosen.get("source_licensors"):
+                member = photos.member_sources[chosen["index_member"]][0] if photos.member_sources else index_root
+                scene = json.loads((member / "catalog" / (chosen["scene_id"] + ".json")).read_text(encoding="utf-8"))
+                chosen["source_licensors"] = [p["name"] for p in scene.get("providers", []) if "licensor" in p.get("roles", [])]
+                chosen["source_license"] = scene.get("license")
             selected.append(chosen)
             if slot in evaluation:
                 paths = []
@@ -79,11 +84,27 @@ def materialize(target_root: Path, index_root: Path, run_root: Path):
     run["selected_unique_views"] = len({row["view_id"] for row in selected})
     run["selected_rotation_counts"] = {str(angle): sum(row["rotation_degrees"] == angle for row in selected)
                                        for angle in sorted({row["rotation_degrees"] for row in selected})}
-    years = sorted({row["acquired_at"][:4] for row in selected})
-    run["credits"] = [f"Contains modified Copernicus Sentinel data {year}" for year in years]
-    run["source_reference"] = "https://registry.opendata.aws/sentinel-2-l2a-cogs/"
+    run["credits"], run["source_references"] = source_credits(selected)
+    run["source_reference"] = run["source_references"][0]
     write_json(run_root / "manifest.json", run)
     return run
+
+
+def source_credits(selected):
+    credits, references = set(), set()
+    for row in selected:
+        source = row.get("source_id", "earthsearch-sentinel2-c1")
+        if source == "planetarycomputer-naip":
+            credits.add("NAIP imagery: USDA; hosted by Microsoft Planetary Computer; cropped/resized/rotated")
+            references.add("https://planetarycomputer.microsoft.com/dataset/naip")
+        elif source == "linz-imagery":
+            licensors = ", ".join(row.get("source_licensors") or ["see source collection providers"])
+            credits.add(f"LINZ imagery: {licensors}; CC BY 4.0; cropped/resized/rotated; collection {row['collection_id']}")
+            references.add("https://registry.opendata.aws/nz-imagery/")
+        else:
+            credits.add(f"Contains modified Copernicus Sentinel data {row['acquired_at'][:4]}")
+            references.add("https://registry.opendata.aws/sentinel-2-l2a-cogs/")
+    return sorted(credits), sorted(references)
 
 
 def encode(frames: Path, destination: Path, sample_fps: float, output_fps: float, duration: float):

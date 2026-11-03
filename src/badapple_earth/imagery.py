@@ -82,6 +82,12 @@ def candidate_windows(src, area: dict, widths: list[int], aspect: list[int], foo
 
 
 def check_quality(valid: np.ndarray, scl: np.ndarray, cloud_max: float) -> dict:
+    if scl is None:
+        if not valid.size:
+            raise ValueError("Valid mask must be nonempty")
+        ratio = float(np.mean(valid))
+        return {"valid_ratio": ratio, "local_cloud_ratio": None, "invalid_scl_ratio": None,
+                "reasons": ["partial_valid"] if ratio < 1 else []}
     if valid.shape != scl.shape or valid.size == 0:
         raise ValueError("RGB mask and SCL must have the same nonempty grid")
     valid_ratio = float(np.mean(valid))
@@ -100,7 +106,7 @@ def check_quality(valid: np.ndarray, scl: np.ndarray, cloud_max: float) -> dict:
 
 def quality_tables(valid, scl):
     """Summed-area masks make overlapping-window quality queries constant time."""
-    masks = [~valid, np.isin(scl, [0, 1]), np.isin(scl, [3, 8, 9, 10])]
+    masks = [~valid] if scl is None else [~valid, np.isin(scl, [0, 1]), np.isin(scl, [3, 8, 9, 10])]
     result = []
     for mask in masks:
         table = np.zeros((mask.shape[0] + 1, mask.shape[1] + 1), dtype=np.uint32)
@@ -116,6 +122,9 @@ def window_quality(tables, sy, sx, cloud_max):
         count = (int(table[sy.stop, sx.stop]) - int(table[sy.start, sx.stop])
                  - int(table[sy.stop, sx.start]) + int(table[sy.start, sx.start]))
         ratios.append(count / area)
+    if len(ratios) == 1:
+        return {"valid_ratio": 1 - ratios[0], "local_cloud_ratio": None, "invalid_scl_ratio": None,
+                "reasons": ["partial_valid"] if ratios[0] else []}
     invalid, scl_bad, cloud = ratios
     reasons = []
     if invalid:

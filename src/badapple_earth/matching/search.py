@@ -99,7 +99,11 @@ def match(target_root: Path, index_root: Path, output: Path, top_k=20,
                             "rgb_cache_ref": tile.get("rgb_cache_ref"),
                             "rgb_cache_row": tile.get("rgb_cache_row"),
                             "view_feature_row": tile.get("view_feature_row")})
-    pq.write_table(pa.Table.from_pylist(matches), output / "matches.parquet", compression="zstd")
+    # Mixed providers have optional provenance fields. Arrow otherwise takes
+    # column names only from the first record and can silently drop later fields.
+    columns = sorted({key for row in matches for key in row})
+    pq.write_table(pa.Table.from_pylist([{key: row.get(key) for key in columns} for row in matches]),
+                   output / "matches.parquet", compression="zstd")
     best = [entry[0][0] / (matrix.shape[1] * 255**2) for entry in retained]
     manifest = {"run_id": run_id,
                 "target_set_id": target_manifest["target_set_id"], "index_id": index_manifest["index_id"],
