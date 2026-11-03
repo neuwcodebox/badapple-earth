@@ -111,6 +111,8 @@ def prepare_views(index_root: Path, manifest: dict, photo_cache: Path | None = N
     from .photos import PhotoCache
     from ..collection.storage import writer_lock
     root = index_root / "views" / VIEW_VERSION
+    if manifest.get("snapshot_source_index_id"):
+        root = root / "snapshots" / manifest["index_id"]
     with writer_lock(root):
         root.mkdir(parents=True, exist_ok=True)
         path = root / "manifest.json"

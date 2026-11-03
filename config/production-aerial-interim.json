@@ -1,0 +1,41 @@
+{
+  "input": "input/badapple.mp4",
+  "index": "data/index/p5-aerial-interim",
+  "packed_index": "data/packed/p5-aerial-interim-new",
+  "search_grid": "fine",
+  "fine_cache": "data/packed/p5-aerial-interim-new-fine",
+  "frame_mode": "all",
+  "crop": [
+    0,
+    0,
+    1444,
+    1080
+  ],
+  "top_k": 20,
+  "rerank_top_k": 20,
+  "display_top_k": 5,
+  "display_candidates": "reranked",
+  "target_batch": 128,
+  "candidate_batch": 32768,
+  "width": 1920,
+  "height": 1080,
+  "font_regular": ".local/fonts/segoeui.ttf",
+  "font_bold": ".local/fonts/segoeuib.ttf",
+  "asset_workers": 2,
+  "render_workers": 2,
+  "segment_frames": 180,
+  "encoder_threads": 2,
+  "crf": 18,
+  "preset": "medium",
+  "audio_mode": "source_local",
+  "high_resolution_selected": true,
+  "extra_rgb_cache": "data/shape-v2/p4-100k",
+  "selection_method": "ms-ssim",
+  "rerank_workers": 4,
+  "reuse_scores": [
+    "data/runs/p6-grid32-full"
+  ],
+  "candidate_photo_cache": "data/runs/p6-grid32-full",
+  "incremental_base_run": "data/runs/p6-grid32-full",
+  "incremental_index": "data/index/p5-aerial-interim-new"
+}

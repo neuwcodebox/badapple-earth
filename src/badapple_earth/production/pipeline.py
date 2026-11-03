@@ -61,8 +61,8 @@ def produce(config, output: Path):
                          index_id=state["search"]["index_id"],
                          ms_ssim_version=assets["selection_version"] if config.get("selection_method")=="ms-ssim" else None,
                          playback_review="not_performed", external_publication="not_performed")
-            write_json(output / "credits.json", {"source": "Contains modified Copernicus Sentinel data", "acquisition_years": assets["acquisition_years"],
-                       "data_reference": "https://registry.opendata.aws/sentinel-2-l2a-cogs/",
+            write_json(output / "credits.json", {"source": assets.get("credits", ["Contains modified Copernicus Sentinel data"]), "acquisition_years": assets["acquisition_years"],
+                       "data_reference": assets.get("source_references", ["https://registry.opendata.aws/sentinel-2-l2a-cogs/"]),
                        "frame_provenance": "selected.parquet", "ranked_candidates": "search/matches.parquet",
                        "input": "User-provided local MP4; original video and audio preserved; no external upload"})
             write_json(path, state)

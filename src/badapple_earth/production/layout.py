@@ -110,5 +110,6 @@ def frame(plan, config):
 
 def location_caption(row):
     lat, lon = row["latitude"], row["longitude"]
+    dates = list(dict.fromkeys(value[:10] for value in row["acquired_at"].split("/")))
     return (f"{abs(lat):.4f}° {'N' if lat >= 0 else 'S'}, {abs(lon):.4f}° {'E' if lon >= 0 else 'W'}"
-            f"   ·   {row['acquired_at'][:10]}")
+            f"   ·   {' – '.join(dates)}")

@@ -101,6 +101,9 @@ def search(run, root, config, targets):
 
 def production_search(target_root, root, config):
     """All-frame fine-grid production; same exact scanner, one retrieval route."""
+    if config.get("incremental_base_run"):
+        from .incremental import production_search as incremental_search
+        return incremental_search(target_root, root, config)
     from ..correlation.pipeline import resolve_metadata
     from ...matching.views import rotation_recipe, VIEW_VERSION
     cache, fine_cache = Path(config["packed_index"]), Path(config["fine_cache"])

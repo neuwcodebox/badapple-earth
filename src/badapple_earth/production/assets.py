@@ -44,14 +44,24 @@ def native_view(image, row, canonical_size):
     return image.resize((width, height), Image.Resampling.BOX, box=box)
 
 
-def native_scene(source, rows, destination, canonical_size):
+def native_scene(source, rows, destination, canonical_size, previous=None):
+    if previous:
+        for row in rows:
+            saved = previous / "assets/selected" / f"{row['view_id']}.png"
+            target = destination / saved.name
+            if saved.exists() and not target.exists():
+                try:
+                    target.hardlink_to(saved)
+                except OSError:
+                    shutil.copyfile(saved, target)
     missing = [row for row in rows if not (destination / f"{row['view_id']}.png").exists()]
     if not missing:
         return []
     scene = json.loads((source / "catalog" / f"{missing[0]['scene_id']}.json").read_text(encoding="utf-8"))
     results = []
     try:
-        with rasterio.Env(**GDAL_OPTIONS), rasterio.open(safe_asset(scene["visual"])) as dataset:
+        from ..sources.aerial import open_rgb_dataset
+        with open_rgb_dataset(scene) as dataset:
             # A source tile can win in several directions. Read its RGB once.
             by_tile = defaultdict(list)
             for row in missing:
@@ -214,6 +224,13 @@ def prepare(root: Path, config):
             thumbnails[row["view_id"]] = row
         selected[chosen[0]["view_id"]] = chosen[0]
     source_paths = {manifest["index_id"]: directory for directory, manifest, _ in members(index_root, index)}
+    source_docs = {}
+    for candidate in matches:
+        if candidate.get("source_id") == "linz-imagery" and not candidate.get("source_licensors"):
+            key = candidate["index_member"], candidate["scene_id"]
+            if key not in source_docs:
+                source_docs[key] = json.loads((source_paths[key[0]] / "catalog" / (key[1] + ".json")).read_text(encoding="utf-8"))
+            candidate["source_licensors"] = [p["name"] for p in source_docs[key].get("providers", []) if "licensor" in p.get("roles", [])]
     folder = root / "assets"
     thumbs, hero = folder / "thumbs", folder / "selected"
     thumbs.mkdir(parents=True, exist_ok=True)
@@ -292,7 +309,8 @@ def prepare(root: Path, config):
     # No SCL re-download or downloaded-image verification. Only display detail
     # not present in the canonical cache is requested from the known asset.
     with ThreadPoolExecutor(max_workers=config["asset_workers"]) as pool:
-        jobs = {pool.submit(native_scene, source_paths[member], rows, hero, target["canonical_size"]): key
+        previous_native = Path(config["incremental_base_run"]) if config.get("incremental_base_run") else None
+        jobs = {pool.submit(native_scene, source_paths[member], rows, hero, target["canonical_size"], previous_native): key
                 for key, rows in groups.items() for member, _ in [key]}
         for number, future in enumerate(as_completed(jobs), 1):
             audit.extend(future.result())
@@ -301,7 +319,8 @@ def prepare(root: Path, config):
                 write_json(audit_path, audit)
     frames, selections = [], []
     years = sorted({r["acquired_at"][:4] for r in thumbnails.values()})
-    credit = "Contains modified Copernicus Sentinel data " + (years[0] if len(years) == 1 else f"{years[0]}–{years[-1]}")
+    from ..matching.output import source_credits
+    credits, source_references = source_credits(thumbnails.values())
     for row, query, evaluation in zip(targets, inverse, choices):
         pool = top[int(query)]
         choice_index = evaluation["selected_index"]
@@ -315,7 +334,7 @@ def prepare(root: Path, config):
         frames.append({"slot": row["slot"], "source_pts": row["source_pts"], "source_time_base": row["source_time_base"],
                        "time": row["target_time"], "duration": target["duration_seconds"], "total": target["count"],
                        "places": search["candidate_count"], "source_image": f"targets/{row['frame']}",
-                       "credit": credit,
+                       "credit": frame_credit(choice),
                        "selected_candidate": selected_index,
                        "score_label": "MS-SSIM" if config.get("selection_method") in {"ms-ssim", "astra"} else "MSE",
                        "selected_image": image.relative_to(root).as_posix(), "caption": location_caption(choice),
@@ -340,6 +359,7 @@ def prepare(root: Path, config):
               "selected_places": len({r["tile_id"] for r in selected.values()}), "native_results": audit,
               "native_detail_available": sum((hero / f"{key}.png").exists() for key in selected),
               "acquisition_years": years,
+              "credits": credits, "source_references": source_references,
               "metadata": "actual coordinates, acquisition date, source and ground dimensions; no inferred place names"}
     write_json(folder / "manifest.json", result)
     # Publication of the frame plan is the completion marker for this stage.
@@ -347,3 +367,11 @@ def prepare(root: Path, config):
     pq.write_table(pa.Table.from_pylist(frames), plan_path, compression="zstd")
     plan_path.replace(root / "frame-plan.parquet")
     return result
+
+
+def frame_credit(row):
+    if row.get("source_id") == "planetarycomputer-naip":
+        return "NAIP / USDA / Microsoft Planetary Computer"
+    if row.get("source_id") == "linz-imagery":
+        return "LINZ / " + ", ".join(row.get("source_licensors") or []) + " / CC BY 4.0"
+    return "Contains modified Copernicus Sentinel data " + row["acquired_at"][:4]

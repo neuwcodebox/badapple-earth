@@ -23,7 +23,7 @@ def main() -> int:
     collect.add_argument("--limit", type=int, default=120)
     verify = commands.add_parser("verify-sample", help="Reextract one sample per scene and scale")
     verify.add_argument("--sample", required=True, type=Path)
-    bulk = commands.add_parser("collect", help="Build or resume a reusable Sentinel-2 feature index")
+    bulk = commands.add_parser("collect", help="Build or resume a reusable satellite or aerial feature index")
     bulk.add_argument("--config", type=Path, default=Path("config/collect.json"))
     bulk.add_argument("--output", required=True, type=Path)
     bulk.add_argument("--limit", type=int, default=10000)
@@ -37,6 +37,8 @@ def main() -> int:
     bundle_cmd = commands.add_parser("combine", help="Combine index snapshots by reference, excluding duplicate tiles")
     bundle_cmd.add_argument("--index", type=Path, action="append", required=True)
     bundle_cmd.add_argument("--output", type=Path, required=True)
+    bundle_cmd.add_argument("--freeze", action="store_true", help="Pin published shards while collection continues")
+    bundle_cmd.add_argument("--disjoint-sources", action="store_true", help="Join bundles with verified distinct source namespaces")
     target_cmd = commands.add_parser("targets", help="Extract fixed targets by nearest actual PTS")
     target_cmd.add_argument("--config", type=Path, default=Path("config/targets.json"))
     target_cmd.add_argument("--output", required=True, type=Path)
@@ -113,8 +115,11 @@ def main() -> int:
             print(f"{result['status']}: {result['rows']}/{result['requested']} places in {args.output}")
             return 0 if result["status"] == "complete" else 1
         elif args.command == "combine":
-            from .collection.bundle import combine
-            result = combine(args.index, args.output)
+            from .collection.bundle import combine, extend_disjoint
+            if args.freeze and args.disjoint_sources:
+                raise ValueError("Choose frozen capture or disjoint bundle extension")
+            result = (extend_disjoint(args.index, args.output) if args.disjoint_sources
+                      else combine(args.index, args.output, freeze=args.freeze))
             print(f"{result['rows']} unique places / {len(result['members'])} members: {args.output}")
         elif args.command == "targets":
             from .matching.targets import targets

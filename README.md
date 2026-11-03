@@ -237,7 +237,17 @@ uv run badapple-earth collect-parallel --config config/collect-linz.json --outpu
 
 NAIP는 Microsoft Planetary Computer의 익명 임시 SAS, LINZ는 공개 HTTPS를 사용한다. 사용자 키나 AWS Requester Pays를 활성화하지 않는다. LINZ는 30cm 촬영 사업을 사용하며 6cm 도시 자료는 초기 대량 계획에 포함하지 않는다. RGB·실제 밴드·유효 마스크·촬영 단일 시점/구간·출처를 보존하고 구름 품질은 미평가로 구분한다. 세부 정책은 [TECH의 항공사진 소스](docs/TECH.md#22-naip--조건부-고해상도-보강)를 따른다.
 
-두 소스가 각각 10만 개로 완료되면 기존 100만과 네 작업 인덱스를 참조해 결합한다. 부분 결과를 완성된 120만으로 표시하지 않는다.
+수집을 계속하면서 공개된 shard를 중간 스냅샷으로 고정하고 기존 100만에 추가할 수 있다. 아래 명령은 사진·특징을 복사하지 않으며 같은 스냅샷 경로로 다시 실행해도 나중에 수집한 행을 섞지 않는다. 새 시점의 스냅샷은 새 경로를 사용한다.
+
+```bash
+uv run badapple-earth combine --freeze --index data/index/p5-naip-100k/part-01 --index data/index/p5-naip-100k/part-02 --index data/index/p5-linz-100k/part-01 --index data/index/p5-linz-100k/part-02 --output data/index/p5-aerial-interim-new
+uv run badapple-earth combine --disjoint-sources --index data/index/p5-1m --index data/index/p5-aerial-interim-new --output data/index/p5-aerial-interim
+uv run badapple-earth produce --config config/production-aerial-interim.json --output data/runs/p6-aerial-interim
+```
+
+중간 전곡은 완료된 기존 32×24 검색·평가·사진을 재사용하고 추가 후보만 검색한다. 선택은 이 비교용 설정의 MS-SSIM이며 기존 Astra 전곡은 보존한다. 현재 고정한 추가 후보 수와 실제 제작 상태는 [중간 전곡 기록](docs/history/2026-11-03-P6-aerial-interim.md)에 둔다.
+
+두 소스가 각각 10만 개로 완료되면 별도의 전체 스냅샷으로 결합한다. 부분 결과를 완성된 120만으로 표시하지 않는다.
 
 ```bash
 uv run badapple-earth combine --index data/index/p5-1m --index data/index/p5-naip-100k/part-01 --index data/index/p5-naip-100k/part-02 --index data/index/p5-linz-100k/part-01 --index data/index/p5-linz-100k/part-02 --output data/index/p5-aerial-1.2m

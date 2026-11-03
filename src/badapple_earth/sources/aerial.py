@@ -1,6 +1,6 @@
 """Bounded anonymous NAIP and LINZ discovery, with unsigned persisted locators."""
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -188,3 +188,15 @@ class AerialReader:
 
     def read_block(self, window):
         return self.src.read((1, 2, 3), window=window), self.src.dataset_mask(window=window) > 0, None
+
+
+@contextmanager
+def open_rgb_dataset(scene):
+    """Read selected native detail with the source's access policy, without SCL."""
+    if scene.get("source_id") in SOURCES:
+        with AerialReader(scene) as reader:
+            yield reader.src
+    else:
+        from .sentinel import safe_asset as sentinel_asset
+        with rasterio.Env(**GDAL_OPTIONS), rasterio.open(sentinel_asset(scene["visual"])) as dataset:
+            yield dataset

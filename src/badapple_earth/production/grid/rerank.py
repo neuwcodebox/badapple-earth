@@ -49,11 +49,15 @@ def evaluate(root, run, source, targets, metadata, shortlists, config):
     reused, audit = {}, []
     target_id = read_manifest(run / "targets")["target_set_id"]
     index_id = read_manifest(Path(source["config"]["index"]))["index_id"]
+    search_manifest = read_manifest(run / "search") if (run / "search/manifest.json").exists() else {}
     for name in config.get("reuse_scores", []):
         cache = Path(name)
         manifest = read_manifest(cache)
+        same_index = manifest.get("index_id") == index_id
+        preserved_baseline = (search_manifest.get("baseline_dense_rows_preserved") is True
+                              and search_manifest.get("baseline_index_id") == manifest.get("index_id"))
         if (manifest.get("ms_ssim_version") != SSIM_VERSION or manifest.get("target_set_id") != target_id
-                or manifest.get("index_id") != index_id):
+                or not (same_index or preserved_baseline)):
             raise ValueError("Reusable MS-SSIM scores need the same explicit metric version")
         table = pq.read_table(cache / "evaluations.parquet", columns=["slot", "dense_row", "ms_ssim"])
         table = table.filter(pc.and_(pc.is_in(table["slot"], value_set=slots),
