@@ -290,7 +290,7 @@ def collect(config: dict, root: Path, limit: int = 10000, stop_after_blocks: int
                     index.release_blocks(area_id)
             resources(index)
             # A completed invocation exits before any catalogue/raster requests.
-            if all(index.count(area=area) >= quota for area, quota in limits.items()):
+            if index.count() >= limit:
                 outcome = "complete"
                 return index.report()
             sources = catalog(root, config)

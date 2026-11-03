@@ -100,6 +100,7 @@ def test_aerial_collection_resumes_and_replays_cached_rgb_without_network(tmp_pa
     from badapple_earth.matching.photos import PhotoCache
     settings = {**config(), "source": aerial.LINZ, "cache_rgb": True, "collect_rotations": True,
                 "catalog_limit_per_aoi": 2}
+    settings["areas"].append({"id": "missing", "terrain_group": "test", "bbox": [2, 0, 3, 1]})
     candidate = {**scene(), "source_id": aerial.LINZ, "asset_key": "visual",
                  "acquired_start": "2023-01-01T00:00:00Z", "acquired_end": "2023-01-03T00:00:00Z"}
     class AerialScene(Scene):
@@ -115,11 +116,12 @@ def test_aerial_collection_resumes_and_replays_cached_rgb_without_network(tmp_pa
             y, x = np.indices((int(window.height), int(window.width)))
             return np.stack([x % 255, y % 255, (x + y) % 255]).astype(np.uint8), np.ones(x.shape, bool), None
     monkeypatch.setattr(aerial, "AerialReader", Reader)
-    monkeypatch.setattr(pipeline, "catalog", lambda *args: {"selected": {"test": [candidate]}})
+    monkeypatch.setattr(pipeline, "catalog", lambda *args: {"selected": {"test": [candidate], "missing": []}})
     assert pipeline.collect(settings, tmp_path, 40, stop_after_blocks=1)["status"] == "paused"
-    manifest = pipeline.collect(settings, tmp_path, 100)
+    manifest = pipeline.collect(settings, tmp_path, 100, redistribute=True)
     assert manifest["status"] == "complete" and manifest["rows"] == 100
     assert manifest["quality_policy"] == aerial.QUALITY_POLICY
+    assert manifest["areas"] == {"test": 100}
     rows = [row for s in manifest["shards"] for row in pq.read_table(tmp_path / "shards" / s["shard_id"] / "tiles.parquet").to_pylist()]
     assert all(r["cloud_quality"] == "unassessed" and r["local_cloud_ratio"] is None for r in rows)
     assert all(r["acquired_end"] == candidate["acquired_end"] for r in rows)
