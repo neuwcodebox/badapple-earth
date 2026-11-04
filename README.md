@@ -255,7 +255,24 @@ uv run badapple-earth combine --index data/index/p5-1m --index data/index/p5-nai
 
 현재 실행 상태·자원·비교 여부는 [PLAN](docs/PLAN.md), 실제 경위는 [수집 기록](docs/history/2026-11-03-P5-aerial-collection.md)에 둔다. 새 인덱스를 기존 전곡이나 Astra 선택에 자동 적용하지 않는다.
 
-### 7. 선택 실험: 형태 우선 검색과 같은 구간 비교
+### 7. 선택 실험: 30° 회전·작은 크롭
+
+고정된 기존 장소의 로컬 RGB를 재사용한다. `views-index`와 `compare-views`는 서로 다른 터미널에서 병행할 수 있다. 검색은 인덱서가 완료한 그룹만 읽고, 두 명령 모두 체크포인트부터 재개한다.
+
+```powershell
+uv run badapple-earth views-index --config config/views30.json
+```
+
+```powershell
+$env:OPENBLAS_NUM_THREADS = '4'
+$env:OMP_NUM_THREADS = '4'
+$env:NUMBA_NUM_THREADS = '4'
+uv run badapple-earth compare-views --config config/views30.json --output data/runs/p6-views30-comparison
+```
+
+작은 크롭은 회전 후 유효 영역의 가로·세로 75%이며, 새 장소 수로 세지 않는다. `comparison.mp4`는 같은 38–48초 원본 프레임으로 기존 직각·30°·30°+작은 크롭을 비교하는 무음 영상이다. 기본 전곡·Astra 선택에 자동 적용하지 않는다. 실제 진행과 검증은 PLAN에 기록한다.
+
+### 8. 선택 실험: 형태 우선 검색과 같은 구간 비교
 
 기존 후보 풀의 전체 view에 PHOG·Rank-layout 검색과 다중 임곗값 SDF·영역·양방향 방향성 Chamfer를 적용한다. 형태가 거의 같은 후보 사이에서 실제 사진 광도로 선택한다. MSE로 앞단 후보를 제한하지 않으며 원색 사진은 분석용 마스크로 바꾸지 않는다.
 

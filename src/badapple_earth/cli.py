@@ -90,6 +90,11 @@ def main() -> int:
     grid = commands.add_parser("compare-grid", help="Compare exact MSE grids and wider candidates with fixed MS-SSIM selection")
     grid.add_argument("--config", type=Path, default=Path("config/grid.json"))
     grid.add_argument("--output", type=Path, required=True)
+    view_index = commands.add_parser("views-index", help="Build/resume local 30-degree and smaller-crop fine features")
+    view_index.add_argument("--config", type=Path, default=Path("config/views30.json"))
+    view_compare = commands.add_parser("compare-views", help="Consume published affine groups and compare the same original frames")
+    view_compare.add_argument("--config", type=Path, default=Path("config/views30.json"))
+    view_compare.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "probe":
@@ -154,6 +159,14 @@ def main() -> int:
             from .production.grid.pipeline import compare
             result = compare(json.loads(args.config.read_text(encoding="utf-8")), args.output)
             print(f"MSE grid comparison {result['status']}: {result['source_frames']} original frames; {args.output}")
+        elif args.command == "views-index":
+            from .production.variants.bank import build
+            result = build(json.loads(args.config.read_text(encoding="utf-8")))
+            print(f"Affine features {result['status']}: {result['completed_views']:,}/{result['rows']:,} views")
+        elif args.command == "compare-views":
+            from .production.variants.pipeline import compare
+            result = compare(json.loads(args.config.read_text(encoding="utf-8")), args.output)
+            print(f"Affine comparison {result['status']}: {result['source_frames']} original frames; {args.output}")
         elif args.command == "shape-index":
             from .shape.index import build
             result = build(args.index, args.output, args.workers)

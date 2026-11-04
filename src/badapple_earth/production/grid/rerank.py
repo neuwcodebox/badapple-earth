@@ -16,7 +16,7 @@ import pyarrow.parquet as pq
 
 from ...collection.bundle import members, read_manifest
 from ...matching.photos import read_rgb_rows
-from ...matching.views import rotate_image
+from ...matching.views import render_view
 from ..assets import old_rgb_refs
 from ..correlation.pipeline import write_table
 from ..rerank import VERSION as SSIM_VERSION, pyramid, similarity
@@ -34,7 +34,7 @@ def score_groups(groups):
         photos = read_rgb_rows(filename, [entry[0] for entry in entries])
         for position, candidate, targets in entries:
             photo = Image.fromarray(photos[position])
-            view = rotate_image(photo, candidate["rotation_degrees"], photo.size, candidate["rotation_crop"])
+            view = render_view(photo, candidate, photo.size)
             stats = pyramid(np.asarray(view.convert("L")))
             for target in targets:
                 result.append({"slot": target["slot"], "dense_row": candidate["dense_row"],
@@ -42,26 +42,31 @@ def score_groups(groups):
     return result
 
 
-def evaluate(root, run, source, targets, metadata, shortlists, config):
+def evaluate(root, run, source, targets, metadata, shortlists, config, *, search_manifest=None):
     wanted = {(r["slot"], r["dense_row"]) for r in shortlists}
     slots = pa.array([r["slot"] for r in targets], type=pa.int64())
     positions = pa.array(sorted(metadata), type=pa.int64())
     reused, audit = {}, []
     target_id = read_manifest(run / "targets")["target_set_id"]
     index_id = read_manifest(Path(source["config"]["index"]))["index_id"]
-    search_manifest = read_manifest(run / "search") if (run / "search/manifest.json").exists() else {}
+    if search_manifest is None:
+        search_manifest = read_manifest(run / "search") if (run / "search/manifest.json").exists() else {}
     for name in config.get("reuse_scores", []):
         cache = Path(name)
         manifest = read_manifest(cache)
-        same_index = manifest.get("index_id") == index_id
+        same_index = (manifest.get("index_id") == index_id
+                      and manifest.get("view_space_id") == search_manifest.get("view_space_id"))
         preserved_baseline = (search_manifest.get("baseline_dense_rows_preserved") is True
-                              and search_manifest.get("baseline_index_id") == manifest.get("index_id"))
+                              and search_manifest.get("baseline_index_id") == manifest.get("index_id")
+                              and search_manifest.get("baseline_view_space_id") == manifest.get("view_space_id"))
         if (manifest.get("ms_ssim_version") != SSIM_VERSION or manifest.get("target_set_id") != target_id
                 or not (same_index or preserved_baseline)):
             raise ValueError("Reusable MS-SSIM scores need the same explicit metric version")
         table = pq.read_table(cache / "evaluations.parquet", columns=["slot", "dense_row", "ms_ssim"])
         table = table.filter(pc.and_(pc.is_in(table["slot"], value_set=slots),
                                     pc.is_in(table["dense_row"], value_set=positions)))
+        if not same_index and search_manifest.get("baseline_view_count") is not None:
+            table = table.filter(pc.less(table["dense_row"], search_manifest["baseline_view_count"]))
         before = len(reused)
         for row in table.to_pylist():
             key = row["slot"], row["dense_row"]
@@ -94,7 +99,8 @@ def evaluate(root, run, source, targets, metadata, shortlists, config):
             offset = row["rgb_cache_row"]
         else:
             raise ValueError("MSE grid comparison requires locally cached RGB")
-        candidate = {k: row[k] for k in ("dense_row", "rotation_degrees", "rotation_crop")}
+        candidate = {k: row.get(k) for k in ("dense_row", "rotation_degrees", "rotation_crop",
+                                             "transform_version", "view_affine", "transform_size")}
         grouped[str(path.resolve())].append((offset, candidate, by_position[position]))
     groups = sorted(grouped.items())
     chunks = [groups[i:i+32] for i in range(0, len(groups), 32)]

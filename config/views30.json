@@ -1,0 +1,17 @@
+{
+  "index": "data/index/p5-aerial-interim",
+  "baseline_run": "data/runs/p6-aerial-interim",
+  "parent_packs": ["data/packed/p5-1m", "data/packed/p5-aerial-interim-new"],
+  "extra_rgb_cache": "data/shape-v2/p4-100k",
+  "bank": "data/variants/p5-interim-angle30-crop75",
+  "angle_step": 30,
+  "crop_scale": 0.75,
+  "workers": 12,
+  "min_free_disk_gib": 30,
+  "start_seconds": 38,
+  "duration_seconds": 10,
+  "top_k": 20,
+  "search_threads": 4,
+  "candidate_batch": 32768,
+  "target_batch": 128
+}

@@ -52,6 +52,13 @@ def rotate_image(image: Image.Image, degrees: int, size, crop=None):
     return rotated.crop(tuple(crop)).resize(tuple(size), Image.Resampling.BOX)
 
 
+def render_view(image, row, size):
+    if row.get("transform_version"):
+        from .affine import image_view
+        return image_view(image, row, size)
+    return rotate_image(image, row["rotation_degrees"], size, row.get("rotation_crop"))
+
+
 def view_metadata(tile, scene, size, degrees):
     crop = rotation_recipe(size, degrees)
     width, height = size

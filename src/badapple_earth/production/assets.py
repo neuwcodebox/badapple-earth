@@ -17,7 +17,7 @@ from ..collection.bundle import members, read_manifest
 from ..evidence import write_json
 from ..imagery import GDAL_OPTIONS
 from ..matching.photos import PhotoCache, read_rgb_rows
-from ..matching.views import rotate_image
+from ..matching.views import rotate_image, render_view
 from ..sources.sentinel import safe_asset
 from .layout import location_caption
 from .rerank import VERSION as RERANK_VERSION, rerank
@@ -31,6 +31,9 @@ def save_image(image, path):
 
 
 def native_view(image, row, canonical_size):
+    if row.get("transform_version"):
+        from ..matching.affine import native_view as affine_native_view
+        return affine_native_view(image, row)
     degrees = row["rotation_degrees"]
     transpose = {90: Image.Transpose.ROTATE_270, 180: Image.Transpose.ROTATE_180, 270: Image.Transpose.ROTATE_90}
     if degrees:
@@ -137,7 +140,7 @@ def cached_photos(run, root, candidates, config, canonical_size, relative_folder
         array = read_rgb_rows(path, [position for position, _ in jobs])
         for position, row in jobs:
             image = Image.fromarray(np.asarray(array[position]))
-            transformed = rotate_image(image, row["rotation_degrees"], canonical_size, row["rotation_crop"])
+            transformed = render_view(image, row, canonical_size)
             save_image(transformed, destination / f"{row['view_id']}.png")
             counts["rgb_shard"] += 1
     return counts
@@ -260,7 +263,7 @@ def prepare(root: Path, config):
             else:
                 image = photos.base(row)
             for view in missing:
-                transformed = rotate_image(image, view["rotation_degrees"], target["canonical_size"], view["rotation_crop"])
+                transformed = render_view(image, view, target["canonical_size"])
                 save_image(transformed, thumbs / f"{view['view_id']}.png")
             if (number + 1) % 500 == 0:
                 print(f"Candidate RGB: {number+1:,}/{len(by_tile):,} places", flush=True)
