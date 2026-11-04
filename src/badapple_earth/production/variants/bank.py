@@ -88,7 +88,7 @@ class Bank:
         bank_id = identity([VERSION,parent["index_id"],[p["cache_id"] for p in packed],self.specification])
         path = self.root/"manifest.json"
         if path.exists():
-            self.state = read_manifest(self.root)
+            self.state = read_manifest_file(path)
             if self.state["bank_id"] != bank_id:
                 raise ValueError("View bank inputs changed; use another bank path")
         else:
@@ -206,7 +206,15 @@ class Bank:
 
 
 def read_manifest_file(path):
-    return json.loads(path.read_text(encoding="utf-8"))
+    # Windows may briefly deny opening the name while its writer atomically
+    # replaces it. Retry only this transient access error, with a finite bound.
+    for attempt in range(8):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except PermissionError:
+            if attempt == 7:
+                raise
+            time.sleep(min(.05*2**attempt,.5))
 
 
 def build(config):

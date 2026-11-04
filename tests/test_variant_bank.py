@@ -95,3 +95,18 @@ def test_scores_from_different_view_banks_cannot_be_reused_by_geographic_index_a
     with pytest.raises(ValueError,match="same explicit metric"):
         evaluate(tmp_path,run,{"config":{"index":str(index)}},[],{},[],
                  {"reuse_scores":[str(cache)],"workers":1},search_manifest={"view_space_id":"new-views"})
+
+
+def test_progress_read_retries_transient_replacement_access_errors_but_is_bounded(monkeypatch):
+    from badapple_earth.production.variants import bank
+    from unittest.mock import Mock
+    path = Mock()
+    path.read_text.side_effect = [PermissionError(), PermissionError(), '{"status":"building"}']
+    monkeypatch.setattr(bank.time,"sleep",lambda _:None)
+    assert bank.read_manifest_file(path) == {"status":"building"}
+    assert path.read_text.call_count == 3
+    path.read_text.reset_mock(side_effect=True)
+    path.read_text.side_effect = PermissionError()
+    with pytest.raises(PermissionError):
+        bank.read_manifest_file(path)
+    assert path.read_text.call_count == 8

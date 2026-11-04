@@ -5,10 +5,10 @@ import time
 
 import numpy as np
 
-from ...collection.bundle import read_manifest
 from ...collection.windows import identity
 from ...evidence import write_json
 from ...matching.distance import dot_dtype
+from .bank import read_manifest_file
 
 VERSION = "affine-published-groups-exact-two-pools-v1"
 
@@ -81,7 +81,7 @@ def search(bank, targets, slots, root, config):
     started = time.perf_counter()
     n = len(bank.specification)
     while True:
-        published = read_manifest(bank.root)
+        published = read_manifest_file(bank.root/"manifest.json")
         if published["bank_id"] != bank.state["bank_id"]:
             raise ValueError("Feature bank changed during retrieval")
         ready = sorted(set(published["completed"])-completed)
