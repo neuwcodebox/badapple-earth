@@ -25,6 +25,14 @@ uv run pytest tests/test_aerial_collection.py tests/test_collection.py tests/tes
 
 2026-11-03 **19:22:50 KST** 중간 관측은 NAIP 4,080개·LINZ 5,642개, 합계 **9,722개**다. 네 작업의 관측 RSS 최대는 약 325–347MiB, 장면 읽기 실패 기록은 0개다. 값은 진행 중 스냅샷이며 최종 수량·저장량·총 실행시간이 아니다. 소스별 manifest의 `status`는 실행 종료 시 갱신되므로 실행 중에는 이전 `paused`가 남을 수 있다. 현재 행 수·로그 증가와 제어기 상태를 함께 본다. 최종 통계와 매칭 비교는 아직 대기 중이다.
 
+## 수집 완료와 후속 비교 상태
+
+2026-11-04 **22:11:09 KST**에 NAIP 병렬 수집이 종료 코드 0·총 **100,000개**로 완료됐다. 각 part는 50,000개이며, 먼저 완료된 LINZ 두 part의 100,000개와 합쳐 실제 신규 사진 **200,000개**다. 완료한 RGB·특징·출처를 확인하려고 다시 다운로드하지 않았다.
+
+네 추가 part를 `data/index/p5-aerial-final-new`로 고정하고, 기존 `data/index/p5-1m`과 서로 다른 소스 namespace의 참조 합집합으로 `data/index/p5-aerial-1.2m`을 만들었다. 고유 **1,200,000개**, 중복 제외 0개이며 인덱스 ID는 `de3d0aadcfc48d09c6570d9d2938533fe27484b1ea1fe79d69faf3bdab4f2c16`이다.
+
+22:19 기준 `.local/aerial-batch.json`은 `comparing`이다. 22:12:51부터 고정 60타깃의 기존 MSE 비교를 계산 중이며 실제 자식 프로세스의 CPU·읽기/쓰기 활동을 확인했다. 네 추가 snapshot의 직각 view descriptor 준비는 모두 완료됐다. 검색 결과 manifest와 최종 baseline 비교는 아직 게시되지 않았으므로 전체 후속 처리가 완료됐다고 표시하지 않는다. 검색 구간별 진행량은 기록하지 않아 종료 추정은 대략적인 범위로 안내한다. 같은 부모 사진의 30°·작은 크롭 비교는 별도 [회전 결과 기록](2026-11-04-P6-views30-resumed.md)을 따른다.
+
 ## 실행·재개와 후속 처리
 
 ```bash
