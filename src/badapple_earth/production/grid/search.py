@@ -101,6 +101,9 @@ def search(run, root, config, targets):
 
 def production_search(target_root, root, config):
     """All-frame fine-grid production; same exact scanner, one retrieval route."""
+    if config.get("affine_configs"):
+        from ..variants.full import production_search as affine_search
+        return affine_search(target_root,root,config)
     if config.get("incremental_base_run"):
         from .incremental import production_search as incremental_search
         return incremental_search(target_root, root, config)

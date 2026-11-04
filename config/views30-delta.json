@@ -1,0 +1,10 @@
+{
+  "index": "data/index/p5-aerial-last68200",
+  "parent_packs": ["data/packed/p5-aerial-last68200"],
+  "extra_rgb_cache": "data/shape-v2/p4-100k",
+  "bank": "data/variants/p5-aerial-last68200-angle30-crop75",
+  "angle_step": 30,
+  "crop_scale": 0.75,
+  "workers": 4,
+  "min_free_disk_gib": 30
+}

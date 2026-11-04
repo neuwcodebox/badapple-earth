@@ -270,7 +270,15 @@ $env:NUMBA_NUM_THREADS = '4'
 uv run badapple-earth compare-views --config config/views30.json --output data/runs/p6-views30-comparison
 ```
 
-작은 크롭은 회전 후 유효 영역의 가로·세로 75%이며, 새 장소 수로 세지 않는다. `comparison.mp4`는 같은 38–48초 원본 프레임으로 기존 직각·30°·30°+작은 크롭을 비교하는 무음 영상이다. 기본 전곡·Astra 선택에 자동 적용하지 않는다. 실제 진행과 검증은 PLAN에 기록한다.
+작은 크롭은 회전 후 유효 영역의 가로·세로 75%이며, 새 장소 수로 세지 않는다. `comparison.mp4`는 같은 38–48초 원본 프레임으로 기존 직각·30°·30°+작은 크롭을 비교하는 무음 영상이다. 기존 전곡·Astra 선택은 보존한다. 실제 진행과 검증은 PLAN에 기록한다.
+
+120만 장소에 두 크기·12방향을 적용하는 별도 전곡 설정은 다음과 같다. 기존 수집·인덱스·직각 검색·일부 affine 질의와 점수를 재사용하며 같은 경로의 중단 체크포인트부터 이어간다. 원본 오디오는 유지한다. 현재 작업이 일시중지 상태라면 사용자의 명시적 재개 요청 후 실행한다.
+
+```powershell
+$env:OPENBLAS_NUM_THREADS = '8'
+$env:OMP_NUM_THREADS = '8'
+uv run badapple-earth produce --config config/production-aerial120-views30.json --output data/runs/p6-aerial120-views30-full
+```
 
 ### 8. 선택 실험: 형태 우선 검색과 같은 구간 비교
 

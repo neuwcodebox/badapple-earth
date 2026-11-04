@@ -278,7 +278,8 @@ def prepare(root: Path, config):
             canonical_rows = [{k:v for k,v in row.items() if k not in {"query","rank","sse","raw_mse"}}
                               for row in metadata.values()]
             canonical_path = root / "candidates.tmp.parquet"
-            pq.write_table(pa.Table.from_pylist(canonical_rows), canonical_path, compression="zstd")
+            columns = sorted({key for row in canonical_rows for key in row})
+            pq.write_table(pa.Table.from_pylist([{key:row.get(key) for key in columns} for row in canonical_rows]), canonical_path, compression="zstd")
             canonical_path.replace(root / "candidates.parquet")
             shortlist = [{"slot":row["slot"], "dense_row":candidate["dense_row"]}
                          for row, query in zip(targets, inverse) for candidate in top[int(query)]]
@@ -350,7 +351,8 @@ def prepare(root: Path, config):
                            "score_role": "reference" if config.get("selection_method") == "astra" else "selection",
                            "source_time_base": row["source_time_base"], "image": image.relative_to(root).as_posix()})
     selection_path = root / "selected.tmp.parquet"
-    pq.write_table(pa.Table.from_pylist(selections), selection_path, compression="zstd")
+    columns = sorted({key for row in selections for key in row})
+    pq.write_table(pa.Table.from_pylist([{key:row.get(key) for key in columns} for row in selections]), selection_path, compression="zstd")
     selection_path.replace(root / "selected.parquet")
     result = {"candidate_views": len(thumbnails), "selected_views": len(selected),
               "evaluated_views":len({c["view_id"] for pool in top.values() for c in pool}),

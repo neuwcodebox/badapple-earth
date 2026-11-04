@@ -21,23 +21,37 @@ def empty_state(queries, k):
 
 
 def update_pool(sse, ties, indices, state, route, begin, end):
-    """Exact lexicographic SSE/tie order in int64; no runtime JIT is needed."""
+    """Partition int32 SSE first; resolve boundary ties by the exact view rank."""
+    if not len(indices):
+        return
     k = state["scores"].shape[-1]
-    # int32 SSE/rank values, including the sentinel, safely fit this product.
-    stride = np.int64(np.iinfo(np.int32).max)+1
-    keys = sse.astype(np.int64)*stride+ties[None,:]
-    previous = state["scores"][route,begin:end].astype(np.int64)*stride+state["ranks"][route,begin:end]
-    keys = np.concatenate((previous,keys),axis=1)
-    selected = np.argpartition(keys,k-1,axis=1)[:,:k]
-    chosen = np.take_along_axis(keys,selected,axis=1)
-    order = np.argsort(chosen,axis=1,kind="stable")
-    selected = np.take_along_axis(selected,order,axis=1)
-    chosen = np.take_along_axis(chosen,order,axis=1)
-    positions = np.concatenate((state["positions"][route,begin:end],
-                                np.broadcast_to(indices,(end-begin,len(indices)))),axis=1)
-    state["scores"][route,begin:end] = chosen//stride
-    state["ranks"][route,begin:end] = chosen%stride
-    state["positions"][route,begin:end] = np.take_along_axis(positions,selected,axis=1)
+    scores = np.concatenate((state["scores"][route,begin:end],sse),axis=1)
+    selected = np.argpartition(scores,k-1,axis=1)[:,:k]
+    cutoff = np.max(np.take_along_axis(scores,selected,axis=1),axis=1)
+    ambiguous = np.flatnonzero(np.count_nonzero(scores == cutoff[:,None],axis=1) > 1)
+    for row in ambiguous:
+        strict = selected[row][scores[row,selected[row]] < cutoff[row]]
+        tied = np.flatnonzero(scores[row] == cutoff[row])
+        rank = np.empty(len(tied),np.int32)
+        old = tied < k
+        rank[old] = state["ranks"][route,begin+row,tied[old]]
+        rank[~old] = ties[tied[~old]-k]
+        chosen = tied[np.argsort(rank,kind="stable")[:k-len(strict)]]
+        selected[row] = np.concatenate((strict,chosen))
+    old = selected < k
+    q = np.broadcast_to(np.arange(end-begin)[:,None],selected.shape)
+    ranks = np.empty(selected.shape,np.int32)
+    positions = np.empty(selected.shape,np.int64)
+    ranks[old] = state["ranks"][route,begin:end][q[old],selected[old]]
+    positions[old] = state["positions"][route,begin:end][q[old],selected[old]]
+    ranks[~old] = ties[selected[~old]-k]
+    positions[~old] = indices[selected[~old]-k]
+    chosen = np.take_along_axis(scores,selected,axis=1)
+    keys = chosen.astype(np.int64)*(np.int64(np.iinfo(np.int32).max)+1)+ranks
+    order = np.argsort(keys,axis=1,kind="stable")
+    state["scores"][route,begin:end] = np.take_along_axis(chosen,order,axis=1)
+    state["ranks"][route,begin:end] = np.take_along_axis(ranks,order,axis=1)
+    state["positions"][route,begin:end] = np.take_along_axis(positions,order,axis=1)
 
 
 def scan_group(targets, values, ties, specification, start, stop, state, candidate_batch, target_batch):

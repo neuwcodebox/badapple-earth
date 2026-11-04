@@ -59,14 +59,18 @@ def evaluate(root, run, source, targets, metadata, shortlists, config, *, search
         preserved_baseline = (search_manifest.get("baseline_dense_rows_preserved") is True
                               and search_manifest.get("baseline_index_id") == manifest.get("index_id")
                               and search_manifest.get("baseline_view_space_id") == manifest.get("view_space_id"))
+        preserved = next((entry for entry in search_manifest.get("preserved_view_spaces",[])
+                          if entry["index_id"] == manifest.get("index_id")
+                          and entry.get("view_space_id") == manifest.get("view_space_id")),None)
         if (manifest.get("ms_ssim_version") != SSIM_VERSION or manifest.get("target_set_id") != target_id
-                or not (same_index or preserved_baseline)):
+                or not (same_index or preserved_baseline or preserved)):
             raise ValueError("Reusable MS-SSIM scores need the same explicit metric version")
         table = pq.read_table(cache / "evaluations.parquet", columns=["slot", "dense_row", "ms_ssim"])
         table = table.filter(pc.and_(pc.is_in(table["slot"], value_set=slots),
                                     pc.is_in(table["dense_row"], value_set=positions)))
-        if not same_index and search_manifest.get("baseline_view_count") is not None:
-            table = table.filter(pc.less(table["dense_row"], search_manifest["baseline_view_count"]))
+        limit = preserved["view_count"] if preserved else search_manifest.get("baseline_view_count")
+        if not same_index and limit is not None:
+            table = table.filter(pc.less(table["dense_row"],limit))
         before = len(reused)
         for row in table.to_pylist():
             key = row["slot"], row["dense_row"]
