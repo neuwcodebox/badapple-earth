@@ -64,12 +64,13 @@ def choose(rows,baseline_position,flat=False):
     return {"current":current,"balanced":balanced,"visible":visible},reason
 
 
-def comparison_frame(target,chosen,root,run,config,total,baseline_score,layout="four-panel"):
+def comparison_frame(target,chosen,root,run,config,total,baseline_score,layout="four-panel",pair_labels=None,left_detail=None):
     canvas = Image.new("RGB",(1920,1080),BG)
     draw = ImageDraw.Draw(canvas)
     if layout == "pair":
-        draw.text((24,32),LABELS["current"],fill=INK,font=font(config["font_bold"],25))
-        draw.text((1110,32),LABELS["visible"],fill=INK,font=font(config["font_bold"],25))
+        labels = pair_labels or (LABELS["current"],LABELS["visible"])
+        draw.text((24,32),labels[0],fill=INK,font=font(config["font_bold"],25))
+        draw.text((1110,32),labels[1],fill=INK,font=font(config["font_bold"],25))
         canvas.paste(resized(str(run/"targets"/target["frame"]),192,143),(864,8))
         draw.text((920,156),"SOURCE",fill=MUTED,font=font(config["font_regular"],15))
         for i,method in enumerate(("current","visible")):
@@ -78,6 +79,8 @@ def comparison_frame(target,chosen,root,run,config,total,baseline_score,layout="
             canvas.paste(resized(str(root/"photos"/(row["view_id"]+".png")),912,680),(x,190))
             detail = (f"MS-SSIM {baseline_score:.4f} / MSE TOP 20" if method=="current"
                       else f"Shape {row['shape_score']:.4f} / boundary {row['boundary_coverage']:.0%}")
+            if method=="current" and left_detail is not None:
+                detail = left_detail
             if row.get("fallback"):
                 detail += " / baseline fallback"
             draw.text((x,890),detail,fill=MUTED,font=font(config["font_regular"],18))

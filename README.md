@@ -310,6 +310,12 @@ uv run badapple-earth compare-silhouette --config config/silhouette.json --outpu
 
 큰 형태와 작은 복잡한 형태를 따로 보는 후속 설정은 `config/silhouette-followup.json`이다. 135–145초와 205–215초의 원본 600프레임을 한 번에 검색하며, `layout: pair`로 왼쪽 현재 선택·오른쪽 윤곽과 대비·위쪽 작은 원본을 배치한다. 같은 명령의 config를 이 파일로, output을 `data/runs/p6-silhouette-followup-20s`로 바꾸면 각 10초인 `small-complex.mp4`와 `large.mp4`를 만든다. 구간별 사진 교체 횟수와 fallback도 manifest에 남긴다.
 
+색감 연속성 비교는 완료한 윤곽 검색 결과만 재사용한다. 형태 점수가 최고점에서 .02 이내인 후보 중 앞뒤 색 변화가 작은 경로를 구간 전체에서 고른다. 왼쪽은 독립 윤곽 선택, 오른쪽은 색감 연속 선택이다.
+
+```powershell
+uv run python -m badapple_earth.production.silhouette.temporal --config config/silhouette-color.json --output data/runs/p6-silhouette-color-20s
+```
+
 ## 사용 방법
 
 기본 제작 흐름은 다음과 같다.

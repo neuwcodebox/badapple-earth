@@ -1,0 +1,7 @@
+{
+  "source": "data/runs/p6-silhouette-followup-20s",
+  "shape_tolerance": 0.02,
+  "max_candidates": 24,
+  "color_weight": 0.2,
+  "workers": 8
+}
