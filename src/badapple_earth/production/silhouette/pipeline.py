@@ -26,6 +26,32 @@ LABELS = {"current":"CURRENT / MSE -> MS-SSIM","balanced":"AREA BALANCED",
           "visible":"SHAPE + VISIBLE CONTRAST"}
 
 
+def intervals(config):
+    result = config.get("intervals",[{"name":"comparison","start":config.get("start",0),
+                                        "duration":config.get("duration",0)}])
+    previous = Fraction(0)
+    names = set()
+    for item in result:
+        begin = Fraction(str(item["start"]))
+        end = begin+Fraction(str(item["duration"]))
+        name = item["name"]
+        if (begin<previous or begin>=end or end>Fraction("218.5")
+                or not name or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in name)
+                or name in names):
+            raise ValueError("Use ordered nonoverlapping named intervals before the credits cutoff")
+        previous = end
+        names.add(name)
+    if not result:
+        raise ValueError("At least one silhouette comparison interval is required")
+    return result
+
+
+def interval_frames(targets,item):
+    begin = Fraction(str(item["start"]))
+    end = begin+Fraction(str(item["duration"]))
+    return [r for r in targets if begin<=Fraction(r["source_pts"])*Fraction(r["source_time_base"])<end]
+
+
 def choose(rows,baseline_position,flat=False):
     current = next(r for r in rows if r["dense_row"]==baseline_position)
     balanced = min(rows,key=lambda r:(r["balanced_mse"],r["view_id"]))
@@ -38,9 +64,27 @@ def choose(rows,baseline_position,flat=False):
     return {"current":current,"balanced":balanced,"visible":visible},reason
 
 
-def comparison_frame(target,chosen,root,run,config,total,baseline_score):
+def comparison_frame(target,chosen,root,run,config,total,baseline_score,layout="four-panel"):
     canvas = Image.new("RGB",(1920,1080),BG)
     draw = ImageDraw.Draw(canvas)
+    if layout == "pair":
+        draw.text((24,32),LABELS["current"],fill=INK,font=font(config["font_bold"],25))
+        draw.text((1110,32),LABELS["visible"],fill=INK,font=font(config["font_bold"],25))
+        canvas.paste(resized(str(run/"targets"/target["frame"]),192,143),(864,8))
+        draw.text((920,156),"SOURCE",fill=MUTED,font=font(config["font_regular"],15))
+        for i,method in enumerate(("current","visible")):
+            row = chosen[method]
+            x = 24+960*i
+            canvas.paste(resized(str(root/"photos"/(row["view_id"]+".png")),912,680),(x,190))
+            detail = (f"MS-SSIM {baseline_score:.4f} / MSE TOP 20" if method=="current"
+                      else f"Shape {row['shape_score']:.4f} / boundary {row['boundary_coverage']:.0%}")
+            if row.get("fallback"):
+                detail += " / baseline fallback"
+            draw.text((x,890),detail,fill=MUTED,font=font(config["font_regular"],18))
+            draw.text((x,922),frame_credit(row),fill=MUTED,font=font(config["font_regular"],13))
+        draw.text((24,1030),f"{timestamp(target['target_time'])}    {target['slot']+1:,} / {total:,}",
+                  fill=MUTED,font=font(config["font_regular"],18))
+        return canvas
     panels = [("SOURCE",run/"targets"/target["frame"],None,None)]
     for method,label in LABELS.items():
         row = chosen[method]
@@ -70,11 +114,13 @@ def compare(config,output):
     source,target,baseline_search = read_manifest(run),read_manifest(run/"targets"),read_manifest(run/"search")
     if source["status"]!="complete" or baseline_search["status"]!="complete":
         raise ValueError("Silhouette comparison needs a completed source production")
-    begin,end = Fraction(str(config["start"])),Fraction(str(config["start"]+config["duration"]))
-    if begin<0 or end>Fraction("218.5") or begin>=end:
-        raise ValueError("Use a nonempty original-frame interval before the requested credits cutoff")
-    targets = [r for r in pq.read_table(run/"targets/targets.parquet").to_pylist()
-               if begin<=Fraction(r["source_pts"])*Fraction(r["source_time_base"])<end]
+    clips = intervals(config)
+    if config.get("layout","four-panel") not in ("four-panel","pair"):
+        raise ValueError("Unknown silhouette comparison layout")
+    all_targets = pq.read_table(run/"targets/targets.parquet").to_pylist()
+    targets = [r for clip in clips for r in interval_frames(all_targets,clip)]
+    if any(not interval_frames(targets,clip) for clip in clips):
+        raise ValueError("Each comparison interval must contain original frames")
     experiment_id = identity([config,source["production_id"],VERSION])
     specifications = sources(config)
     with writer_lock(root):
@@ -152,25 +198,38 @@ def compare(config,output):
         manifest["fallback_frames"] = dict(Counter(reason for reason in reasons.values() if reason))
         manifest["status"] = "render"
         write_json(root/"manifest.json",manifest)
-        temporary = root/"comparison.tmp.mp4"
-        with (root/"encode.log").open("wb") as log:
-            process = encoder(temporary,1920,1080,target["frame_rate"],
+        videos = []
+        for clip in clips:
+            frames = interval_frames(targets,clip)
+            name = clip["name"]
+            temporary = root/(name+".tmp.mp4")
+            with (root/(name+"-encode.log")).open("wb") as log:
+                process = encoder(temporary,1920,1080,target["frame_rate"],
                               {"encoder_threads":4,"preset":"medium","crf":18},log)
-            try:
-                for i,frame in enumerate(targets):
-                    image = comparison_frame(frame,choices[frame["slot"]],root,run,source["config"],target["count"],control[frame["slot"]]["selection_score"])
-                    process.stdin.write(image.tobytes())
-                    if i==len(targets)//2:
-                        image.save(root/"preview.png")
-                process.stdin.close()
-                if process.wait()!=0:
-                    raise ValueError("Silhouette comparison encoding failed; see encode.log")
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    process.wait()
-        temporary.replace(root/"comparison.mp4")
-        manifest.update(status="complete",video="comparison.mp4",video_duration_seconds=float(len(targets)/Fraction(target["frame_rate"])),
+                try:
+                    for i,frame in enumerate(frames):
+                        image = comparison_frame(frame,choices[frame["slot"]],root,run,source["config"],target["count"],control[frame["slot"]]["selection_score"],config.get("layout","four-panel"))
+                        process.stdin.write(image.tobytes())
+                        if i==len(frames)//2:
+                            image.save(root/("preview.png" if name=="comparison" else name+"-preview.png"))
+                    process.stdin.close()
+                    if process.wait()!=0:
+                        raise ValueError(f"Silhouette comparison encoding failed; see {name}-encode.log")
+                finally:
+                    if process.poll() is None:
+                        process.terminate()
+                        process.wait()
+            temporary.replace(root/(name+".mp4"))
+            ids = [f["slot"] for f in frames]
+            clip_selected = {method:[choices[i][method] for i in ids] for method in LABELS}
+            videos.append({**clip,"video":name+".mp4","frames":len(frames),
+                           "video_duration_seconds":float(len(frames)/Fraction(target["frame_rate"])),
+                           "fallback_frames":dict(Counter(reasons[i] for i in ids if reasons[i])),
+                           "transitions":{method:sum(a["view_id"]!=b["view_id"] for a,b in zip(rows,rows[1:]))
+                                          for method,rows in clip_selected.items()}})
+        manifest.update(status="complete",videos=videos,video=videos[0]["video"],
+                        video_duration_seconds=videos[0]["video_duration_seconds"],
+                        total_video_duration_seconds=sum(v["video_duration_seconds"] for v in videos),
                         elapsed_seconds_last_run=round(time.perf_counter()-started,3),playback_review="not_performed",
                         interpretation="experimental weights and visibility thresholds; metrics do not establish perceptual improvement")
         write_json(root/"manifest.json",manifest)

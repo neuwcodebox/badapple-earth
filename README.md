@@ -308,6 +308,8 @@ uv run badapple-earth compare-silhouette --config config/silhouette.json --outpu
 
 검색과 점수 배치는 같은 명령으로 재개한다. 후보 검색은 기존 MSE Top-20로 제한하지 않는다. 기본 구간은 38–48초이며 원본 300프레임의 비교용 무음 영상이다. 초기 가중치·시인성 조건과 실제 결과는 TECH와 PLAN에 기록한다.
 
+큰 형태와 작은 복잡한 형태를 따로 보는 후속 설정은 `config/silhouette-followup.json`이다. 135–145초와 205–215초의 원본 600프레임을 한 번에 검색하며, `layout: pair`로 왼쪽 현재 선택·오른쪽 윤곽과 대비·위쪽 작은 원본을 배치한다. 같은 명령의 config를 이 파일로, output을 `data/runs/p6-silhouette-followup-20s`로 바꾸면 각 10초인 `small-complex.mp4`와 `large.mp4`를 만든다. 구간별 사진 교체 횟수와 fallback도 manifest에 남긴다.
+
 ## 사용 방법
 
 기본 제작 흐름은 다음과 같다.

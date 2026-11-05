@@ -100,7 +100,7 @@ def evaluate(target,photo,original,config):
     return result
 
 
-@lru_cache(maxsize=384)
+@lru_cache(maxsize=1024)
 def load_target(path):
     with Image.open(path) as image:
         gray = np.asarray(image.convert("L"),np.float32)/255

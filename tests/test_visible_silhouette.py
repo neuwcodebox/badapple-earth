@@ -66,6 +66,20 @@ def test_float_topk_has_stable_global_address_ties_across_out_of_order_batches()
     np.testing.assert_array_equal(positions,expected)
 
 
+def test_parallel_topk_matches_full_sort_with_dense_ties_and_arbitrary_addresses():
+    rng = np.random.default_rng(32)
+    values = rng.integers(-8,9,(7,93)).astype(np.float32)/8
+    addresses = rng.permutation(93).astype(np.int64)*3+100
+    scores = np.full((7,13),-np.inf,np.float32)
+    positions = np.full((7,13),-1,np.int64)
+    for begin in range(0,93,11):
+        keep(scores,positions,values[:,begin:begin+11],addresses[begin:begin+11])
+    for row in range(7):
+        best = np.lexsort((addresses,-values[row]))[:13]
+        np.testing.assert_array_equal(positions[row],addresses[best])
+        np.testing.assert_array_equal(scores[row],values[row,best])
+
+
 def test_complete_pool_region_retrieval_matches_weighted_pixel_mse_and_reuses_checkpoint(tmp_path,monkeypatch):
     run,root = tmp_path/"run",tmp_path/"output"
     (run/"targets").mkdir(parents=True)
@@ -111,3 +125,27 @@ def test_cached_rgb_scoring_uses_the_same_actual_view_as_target(tmp_path,affine)
     assert len(results)==1 and results[0]["slot"]==3 and results[0]["dense_row"]==17
     assert results[0]["balanced_mse"] == pytest.approx(0,abs=1e-7)
     assert results[0]["gc"] > .999 and results[0]["visible"]
+
+
+def test_disjoint_intervals_keep_original_pts_and_exclude_gap():
+    from badapple_earth.production.silhouette.pipeline import intervals,interval_frames
+    clips = intervals({"intervals":[{"name":"small-complex","start":135,"duration":10},
+                                  {"name":"large","start":205,"duration":10}]})
+    targets = [{"slot":i,"source_pts":str(t),"source_time_base":"1/10"}
+               for i,t in enumerate((1349,1350,1449,1450,2049,2050,2149,2150))]
+    assert [[r["slot"] for r in interval_frames(targets,c)] for c in clips] == [[1,2],[5,6]]
+    assert intervals({"start":38,"duration":10}) == [{"name":"comparison","start":38,"duration":10}]
+
+
+@pytest.mark.parametrize("clips",[
+    [],[{"name":"bad/name","start":1,"duration":10}],
+    [{"name":"beyond","start":210,"duration":10}],
+    [{"name":"zero","start":1,"duration":0}],
+    [{"name":"negative","start":-1,"duration":10}],
+    [{"name":"first","start":20,"duration":10},{"name":"second","start":25,"duration":10}],
+    [{"name":"same","start":20,"duration":10},{"name":"same","start":30,"duration":10}],
+])
+def test_comparison_rejects_empty_unsafe_overlapping_or_out_of_content_intervals(clips):
+    from badapple_earth.production.silhouette.pipeline import intervals
+    with pytest.raises(ValueError):
+        intervals({"intervals":clips})

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 
 import numpy as np
+from numba import njit, prange
 
 from ...collection.bundle import read_manifest
 from ...collection.windows import identity
@@ -73,23 +74,21 @@ def sources(config):
     return result
 
 
+@njit(cache=True,parallel=True)
 def keep(scores,positions,dot,indices):
     """Descending float32 score; exact boundary ties use frozen dense address."""
     k = scores.shape[1]
-    values = np.concatenate((scores,dot),axis=1)
-    addresses = np.concatenate((positions,np.broadcast_to(indices,(len(dot),len(indices)))),axis=1)
-    selected = np.argpartition(-values,k-1,axis=1)[:,:k]
-    cutoff = np.min(np.take_along_axis(values,selected,axis=1),axis=1)
-    for row in np.flatnonzero(np.count_nonzero(values==cutoff[:,None],axis=1)>1):
-        better = selected[row][values[row,selected[row]]>cutoff[row]]
-        tied = np.flatnonzero(values[row]==cutoff[row])
-        tied = tied[np.argsort(addresses[row,tied],kind="stable")[:k-len(better)]]
-        selected[row] = np.concatenate((better,tied))
-    value = np.take_along_axis(values,selected,axis=1)
-    address = np.take_along_axis(addresses,selected,axis=1)
-    for row in range(len(dot)):
-        order = np.lexsort((address[row],-value[row]))
-        scores[row],positions[row] = value[row,order],address[row,order]
+    for row in prange(dot.shape[0]):
+        for col in range(dot.shape[1]):
+            value,address = dot[row,col],indices[col]
+            if value<scores[row,k-1] or (value==scores[row,k-1] and address>=positions[row,k-1]):
+                continue
+            dest = k-1
+            while dest>0 and (value>scores[row,dest-1] or
+                             (value==scores[row,dest-1] and address<positions[row,dest-1])):
+                scores[row,dest],positions[row,dest] = scores[row,dest-1],positions[row,dest-1]
+                dest -= 1
+            scores[row,dest],positions[row,dest] = value,address
 
 
 def search(run,root,config,targets,specifications):
