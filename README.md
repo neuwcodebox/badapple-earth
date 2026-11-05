@@ -329,6 +329,8 @@ uv run python -m badapple_earth.production.silhouette.full --resume
 
 중단 요청은 다른 터미널에서 `uv run python -m badapple_earth.production.silhouette.full --pause`로 보낸다. 새 배치 배정을 멈추고 실행 중인 배치를 저장한 뒤 manifest가 `paused`로 바뀐다. 같은 `--resume` 명령은 중단 요청을 해제하고 이어간다. 갑자기 프로세스가 종료돼도 원자적으로 저장된 검색 체크포인트·평가 배치·사진·인코딩 구간을 재사용한다. 미완성 배치나 영상 구간만 다시 처리한다.
 
+검색까지만 끝내고 멈추려면 실행 명령에 `--stop-after-search`를 추가한다. 완료된 검색을 저장한 뒤 후속 후보 구성·평가를 시작하기 전에 `paused`로 종료한다. 이후 이 옵션 없이 `--resume`하면 검색 결과를 재사용해 다음 단계부터 이어간다.
+
 출력은 `data/runs/p6-silhouette-color-full/`의 `final-16x9.mp4`와 `satellite-full.mp4`이며, 로컬 원본 오디오도 콘텐츠 끝까지 보존한다. 현재 단계는 루트 `manifest.json`, 검색 진행은 `retrieval/progress.json`, 정밀 평가는 루트 `progress.json`에서 확인한다. 기존 출처·좌표·변환의 반복 검수는 하지 않는다.
 
 ## 사용 방법

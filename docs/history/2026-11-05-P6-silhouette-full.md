@@ -28,3 +28,9 @@ uv run python -m badapple_earth.production.silhouette.full --pause
 실제 전곡 검색은 21:34경부터 진행했다. 초기 구현을 전체 파이프라인으로 연결하며 체크포인트를 이어갔다. **5,313,632 view·누적 670.361초**에서 실제 `--pause` 후 `paused`와 정상 프로세스 종료를 확인했고, `--resume`으로 해당 지점부터 다시 진행했다. 실제 강제 종료 시나리오나 전체 후속 단계 완료를 이 관측으로 주장하지 않는다. 재개 로그는 `.local/silhouette-full-resumed.log`다.
 
 21:46에는 검색 5,706,848/28,800,000 view, 검색 잔여 추정 약 49분이었다. 최초 전체 예상 4–6시간은 실측 검색 속도에 따라 **11월 5일 23:30–6일 00:30 KST**로 갱신했다. 정밀 평가·상세 사진 준비는 아직 실행 전이므로 전체 예상은 변할 수 있다. **최종 영상과 전체 사용자 재생 평가는 아직 완료가 아니다.**
+
+## 검색 완료 후 사용자 지정 일시중단
+
+사용자가 검색만 끝내고 일시중지하도록 요청했다. `--stop-after-search` 옵션을 추가해 검색 완료 직후 후보 구성보다 먼저 `pause.request`와 `completed_stage: retrieval`을 저장하고 `paused`로 종료하게 했다. 기존 검색 체크포인트를 이어서 **2026-11-05 22:34:33 KST**에 **28,800,000/28,800,000 view** 검색을 완료했고 프로세스는 종료 코드 0으로 멈췄다. 누적 검색 시간은 **3,581.890초**다. root manifest는 `paused`, 검색 잔여 시간은 0이다. 후속 후보 구성·메타데이터·정밀 평가·색감 선택·영상 생성은 시작하지 않았다.
+
+저장 경로는 `data/runs/p6-silhouette-color-full/retrieval/retrieval.npz`와 `progress.json`, 루트 `manifest.json`이다. 로그는 `.local/silhouette-full-search-only.log`다. 재개 지시가 오면 `--stop-after-search` 없이 `--resume`을 실행한다. 완료한 검색은 다시 계산하지 않고 이후 단계부터 이어가며, 위의 완료 시각 예상은 일시중단으로 더 이상 유효하지 않다. 새 예상은 재개 후 안내한다.

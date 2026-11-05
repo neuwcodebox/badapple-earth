@@ -243,7 +243,7 @@ def assets(root,run,targets,metadata,config):
     write_table(root/"frame-plan.parquet",frames)
 
 
-def produce(config,output,resume=False):
+def produce(config,output,resume=False,stop_after_search=False):
     root,run = Path(output).resolve(),Path(config["run"])
     pause_file = root/"pause.request"
     production_id = identity([FULL_VERSION,VERSION,COLOR_VERSION,config,read_manifest(run)["production_id"]])
@@ -266,6 +266,10 @@ def produce(config,output,resume=False):
             stage("retrieval")
             folder = root/"retrieval"
             with writer_lock(folder):result = search(run,folder,runtime,targets,sources(config))
+            state["completed_stage"] = "retrieval"
+            if stop_after_search:
+                pause_file.touch()
+                raise InterruptedError("Retrieval completed; paused before subsequent processing")
             shortlists(root,run,targets,result)
             del result
             stage("metadata")
@@ -321,6 +325,7 @@ if __name__=="__main__":
     parser.add_argument("--output",default="data/runs/p6-silhouette-color-full")
     parser.add_argument("--resume",action="store_true")
     parser.add_argument("--pause",action="store_true")
+    parser.add_argument("--stop-after-search",action="store_true")
     args = parser.parse_args()
     if args.pause:
         root = Path(args.output)
@@ -328,5 +333,5 @@ if __name__=="__main__":
         (root/"pause.request").touch()
         print("Pause requested; in-flight batches will be saved",flush=True)
     else:
-        result = produce(json.loads(Path(args.config).read_text(encoding="utf-8")),args.output,args.resume)
+        result = produce(json.loads(Path(args.config).read_text(encoding="utf-8")),args.output,args.resume,args.stop_after_search)
         print(json.dumps({"status":result["status"]}),flush=True)
