@@ -49,7 +49,7 @@ def produce(config, output: Path):
                                 config["top_k"], config["target_batch"])
             else:
                 raise ValueError("search_grid must be coarse or fine")
-            state.update(status="assets", search=result)
+            state.update(status="assets", search=result, view_space_id=result.get("view_space_id"))
             write_json(path, state)
             assets = prepare(output, config)
             state.update(status="render", assets={key: value for key, value in assets.items() if key != "native_results"})
