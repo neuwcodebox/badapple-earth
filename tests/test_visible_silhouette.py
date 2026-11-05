@@ -90,3 +90,24 @@ def test_complete_pool_region_retrieval_matches_weighted_pixel_mse_and_reuses_ch
     monkeypatch.setattr('badapple_earth.production.silhouette.search.feature_batches',forbidden)
     repeated = search(run,root,config,frames,specs)
     np.testing.assert_array_equal(result["positions"],repeated["positions"])
+
+
+@pytest.mark.parametrize("affine",[False,True])
+def test_cached_rgb_scoring_uses_the_same_actual_view_as_target(tmp_path,affine):
+    from PIL import Image
+    from badapple_earth.matching.affine import VERSION,recipe
+    from badapple_earth.matching.views import render_view
+    from badapple_earth.production.silhouette.evaluation import score_groups
+    rgb = np.full((191,256,3),20,np.uint8)
+    rgb[35:160,65:195] = 230
+    np.save(tmp_path/"rgb.npy",rgb[None])
+    row = {"dense_row":17,"rotation_degrees":180,"rotation_crop":None}
+    if affine:
+        row.update(transform_version=VERSION,view_affine=recipe((256,191),30,.75),transform_size=[256,191])
+    image = render_view(Image.fromarray(rgb),row,(256,191))
+    image.save(tmp_path/"target.png")
+    groups = [(str(tmp_path/"rgb.npy"),[(0,row,[{"slot":3,"path":str(tmp_path/"target.png")}])])]
+    results = score_groups(groups,CONFIG)
+    assert len(results)==1 and results[0]["slot"]==3 and results[0]["dense_row"]==17
+    assert results[0]["balanced_mse"] == pytest.approx(0,abs=1e-7)
+    assert results[0]["gc"] > .999 and results[0]["visible"]
