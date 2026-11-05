@@ -12,7 +12,7 @@ from ..collection.windows import identity
 from ..evidence import write_json
 from . import layout
 
-LAYOUT_VERSION = "minimal-counters-original-retrieval-ranks-v3"
+LAYOUT_VERSION = "minimal-counters-original-retrieval-ranks-available-places-v4"
 
 
 def absolute_plan(row, root):

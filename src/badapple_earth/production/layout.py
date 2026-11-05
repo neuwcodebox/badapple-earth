@@ -38,15 +38,17 @@ def timestamp(value):
     return f"{minutes:02d}:{tenths/10:04.1f}"
 
 
-@lru_cache(maxsize=5)
-def template(selected):
+@lru_cache(maxsize=25)
+def template(selected, count=5):
     canvas = Image.new("RGB", (1920, 1080), BG)
-    canvas.paste(connections(selected), (0, 0), connections(selected))
+    canvas.paste(connections(selected,count), (0, 0), connections(selected,count))
     return canvas
 
 
-@lru_cache(maxsize=5)
-def connections(selected):
+@lru_cache(maxsize=25)
+def connections(selected, count=5):
+    if not 1 <= count <= len(THUMBS) or not 0 <= selected < count:
+        raise ValueError("Show one to five actual candidates with the selected view present")
     # Rasterize static wires once with antialiasing, rather than on every frame.
     canvas = Image.new("RGBA", (1920*2, 1080*2))
     high = ImageDraw.Draw(canvas)
@@ -58,7 +60,7 @@ def connections(selected):
     draw = Pen()
     sx, sy, sw, sh = SOURCE
     origin = (sx + sw + 2, sy + sh // 2)
-    for x, y, width, height in THUMBS:
+    for x, y, width, height in THUMBS[:count]:
         center = y + height // 2
         draw.line([origin, (370, origin[1]), (370, center), (x - 12, center)], fill="#293645", width=1, joint="curve")
     chosen_center = THUMBS[selected][1] + THUMBS[selected][3] // 2
@@ -81,7 +83,7 @@ def connections(selected):
 def frame(plan, config):
     regular, bold = config["font_regular"], config["font_bold"]
     selected = plan.get("selected_candidate", 0)
-    canvas = template(selected).copy()
+    canvas = template(selected,len(plan["candidates"])).copy()
     draw = ImageDraw.Draw(canvas)
     sx, sy, sw, sh = SOURCE
     canvas.paste(resized(plan["source_image"], sw, sh), (sx, sy))

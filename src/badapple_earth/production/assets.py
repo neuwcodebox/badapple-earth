@@ -178,16 +178,18 @@ def astra_choices(root, config, targets, inverse, top):
 
 
 def displayed_candidates(pool, choice, count):
-    """Keep the real winner and best other places in original retrieval order."""
+    """Show the winner and up to count real distinct places from this pool."""
+    if count < 1:
+        raise ValueError("Display count must be positive")
     shown, seen = [choice], {choice["tile_id"]}
     for row in sorted(pool, key=lambda r: (r["rank"], r["view_id"])):
+        if len(shown) >= count:
+            break
         if row["tile_id"] not in seen:
             shown.append(row)
             seen.add(row["tile_id"])
             if len(shown) == count:
                 break
-    if len(shown) != count:
-        raise ValueError("The retrieval pool has too few distinct places to display")
     return sorted(shown, key=lambda r: (r["rank"], r["view_id"]))
 
 
