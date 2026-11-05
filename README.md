@@ -296,6 +296,18 @@ uv run badapple-earth shape-render --targets data/targets/38s-10s-6fps --index d
 
 `method-comparison.mp4`는 왼쪽부터 원본·10만 MSE·10만 형태 검색이다. `report.html`에는 전체 목표의 사진·마스크·SDF·형태/광도/대비 점수와 출처가 있다. `low_visibility`는 비교 영상과 보고서에 표시한다. 설정·분기·저장 비용은 [형태 검색 계약](docs/SHAPE_MATCHING.md)에 둔다.
 
+### 9. 영역 균형·윤곽·실제 대비의 10초 비교
+
+기존 완성 전곡의 같은 원본 프레임과 전체 view 풀을 사용한다. 현재 선택을 보존하고 영역 균형만 적용한 선택, 윤곽과 실제 경계 대비까지 평가한 선택을 원본과 함께 비교한다. 원색 사진은 바꾸지 않으며 필요한 RGB는 로컬 캐시에서 읽는다.
+
+```powershell
+$env:OPENBLAS_NUM_THREADS = '8'
+$env:OMP_NUM_THREADS = '8'
+uv run badapple-earth compare-silhouette --config config/silhouette.json --output data/runs/p6-silhouette-visible-10s
+```
+
+검색과 점수 배치는 같은 명령으로 재개한다. 후보 검색은 기존 MSE Top-20로 제한하지 않는다. 기본 구간은 38–48초이며 원본 300프레임의 비교용 무음 영상이다. 초기 가중치·시인성 조건과 실제 결과는 TECH와 PLAN에 기록한다.
+
 ## 사용 방법
 
 기본 제작 흐름은 다음과 같다.

@@ -1,6 +1,7 @@
 """Clockwise, inscribed affine views of one real photo, without padded corners."""
 
 import math
+from functools import lru_cache
 
 from PIL import Image
 from pyproj import Transformer, CRS
@@ -9,6 +10,11 @@ from rasterio.transform import Affine
 from ..collection.windows import identity
 
 VERSION = "nearest-inscribed-margin1-center-crop-v1"
+
+
+@lru_cache(maxsize=256)
+def geographic_tools(crs):
+    return Transformer.from_crs(crs,"EPSG:4326",always_xy=True),CRS.from_user_input(crs).get_geod()
 
 
 def variants(step=30, crop_scale=.75):
@@ -71,10 +77,9 @@ def metadata(tile, scene, size, variant):
         return left+(a*x+b*y+c)*sw/width, top+(d*x+e*y+f)*sh/height
     pixels = [pixel(x,y) for x,y in ((0,0),(width,0),(width,height),(0,height))]
     affine = Affine(*scene["affine"])
-    converter = Transformer.from_crs(scene["crs"], "EPSG:4326", always_xy=True)
+    converter,geod = geographic_tools(scene["crs"])
     geographic = [list(converter.transform(*(affine*point))) for point in pixels]
     center = converter.transform(*(affine*pixel(width/2,height/2)))
-    geod = CRS.from_user_input(scene["crs"]).get_geod()
     x, y = zip(*pixels)
     import json
     return {**tile, "view_id": tile["tile_id"]+"-"+variant["tag"]+"-"+identity([VERSION,list(size)])[:16],
