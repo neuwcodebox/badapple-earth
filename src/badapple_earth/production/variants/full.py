@@ -9,7 +9,8 @@ import pyarrow.parquet as pq
 from ...collection.bundle import members, read_manifest
 from ...collection.windows import identity
 from ...evidence import write_json
-from ...matching.views import rotation_recipe
+from ...matching.views import rotation_recipe, VIEW_VERSION
+from ...matching.affine import VERSION as AFFINE_VERSION
 from ..grid.incremental import merge_topk
 from ..search import resolve
 from .bank import Bank
@@ -164,11 +165,17 @@ def production_search(target_root, root, config):
     result = {**base,"status":"complete","run_id":run_id,"index_id":full_manifest["index_id"],
               "candidate_count":full_manifest["rows"],"view_count":offset+extra.state["rows"],
               "view_space_id":view_space,"rotations":list(range(0,360,30)),"crop_scales":[1,.75],
+              "view_versions":[VIEW_VERSION,old_bank.state.get("transform_version",AFFINE_VERSION)],
+              "baseline_run_id":base["run_id"],"existing_places_reused":base["candidate_count"],
+              "new_places_searched":extra.state["parents"],
               "baseline_index_id":base["index_id"],"baseline_dense_rows_preserved":True,"baseline_view_count":base["view_count"],
               "preserved_view_spaces":[{"index_id":base["index_id"],"view_space_id":None,"view_count":base["view_count"]},
                  {"index_id":base["index_id"],"view_space_id":old_bank.state["bank_id"],"view_count":base["view_count"]+old_bank.state["rows"]}],
               "affine_cached_queries_reused":len(seed),"retrieval_seconds":round(time.perf_counter()-started,3),
               "best_mse_mean":float(np.mean([first[int(q)] for q in inverse]))}
+    for field in ("view_version","incremental_index_id","incremental_version",
+                  "baseline_metadata_views_reused","additional_retrieval_seconds"):
+        result.pop(field,None)
     if result["view_count"] != 24*result["candidate_count"]:
         raise ValueError("Every full production photo must have all 24 requested views")
     write_json(root/"manifest.json",result)

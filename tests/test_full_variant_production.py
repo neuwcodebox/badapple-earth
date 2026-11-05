@@ -117,7 +117,8 @@ def test_full_search_merges_all_24_views_per_photo_and_remaps_frozen_source_memb
     np.save(target_root/"gray_fine.npy",queries)
     dump(target_root/"manifest.json",{"target_set_id":"targets","canonical_size":[32,24]})
     dump(baseline/"search/manifest.json",{"run_id":"base","status":"complete","index_id":"base-index",
-           "target_set_id":"targets","top_k":2,"grid":[32,24],"view_count":4,"candidate_count":1})
+           "target_set_id":"targets","top_k":2,"grid":[32,24],"view_count":4,"candidate_count":1,
+           "baseline_run_id":"older-base","incremental_index_id":"older-delta","new_places_searched":123})
     np.save(baseline/"search/query_inverse.npy",inverse)
     def metadata(stage,position,offset=0):
         return {"view_id":f"{stage}-{position:02}","tile_id":"old" if stage in ("a","b") else "new",
@@ -152,6 +153,9 @@ def test_full_search_merges_all_24_views_per_photo_and_remaps_frozen_source_memb
               "packed_index":str(tmp_path/"packed"),"fine_cache":str(tmp_path/"fine")}
     result = full.production_search(target_root,tmp_path/"output",config)
     assert result["candidate_count"] == 2 and result["view_count"] == 48
+    assert result["baseline_run_id"] == "base"
+    assert result["existing_places_reused"] == result["new_places_searched"] == 1
+    assert "incremental_index_id" not in result and len(result["view_versions"]) == 2
     rows = pq.read_table(tmp_path/"output/matches.parquet").to_pylist()
     values = np.concatenate(arrays).reshape(48,-1)
     all_distance = np.sum((unique[:,None].astype(np.int64)-values[None].astype(np.int64))**2,axis=2)
