@@ -83,6 +83,8 @@ def mux(root, parts, kind, destination, config):
     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                "-f", "concat", "-safe", "0", "-i", str(listing)]
     if config["audio_mode"] == "source_local":
+        if config.get("end_seconds") is not None:
+            command.extend(["-t",str(config["end_seconds"])])
         command.extend(["-i", str(Path(config["input"])), "-map", "0:v:0", "-map", "1:a:0?", "-c:a", "copy"])
     elif config["audio_mode"] == "silent":
         command.append("-an")
@@ -102,13 +104,21 @@ def render(root: Path, config, rows):
     (root / "segments").mkdir(exist_ok=True)
     chunk = config["segment_frames"]
     parts = []
-    with ProcessPoolExecutor(max_workers=config["render_workers"], mp_context=get_context("spawn")) as pool:
-        jobs = [pool.submit(segment, str(root.resolve()), rows[begin:begin+chunk], target["frame_rate"], config, render_id)
-                for begin in range(0, len(rows), chunk)]
-        for future in as_completed(jobs):
-            part = future.result()
+    if config.get("pause_file"):
+        from .silhouette.control import batches
+        def saved(_,part):
             parts.append(part)
-            print(f"Encoded source frames: {sum(p['frames'] for p in parts):,}/{len(rows):,} (two outputs)", flush=True)
+            print(f"Encoded source frames: {sum(p['frames'] for p in parts):,}/{len(rows):,} (two outputs)",flush=True)
+        batches([((str(root.resolve()),rows[begin:begin+chunk],target["frame_rate"],config,render_id),begin)
+                 for begin in range(0,len(rows),chunk)],segment,saved,config["render_workers"],config["pause_file"])
+    else:
+        with ProcessPoolExecutor(max_workers=config["render_workers"], mp_context=get_context("spawn")) as pool:
+            jobs = [pool.submit(segment, str(root.resolve()), rows[begin:begin+chunk], target["frame_rate"], config, render_id)
+                    for begin in range(0, len(rows), chunk)]
+            for future in as_completed(jobs):
+                part = future.result()
+                parts.append(part)
+                print(f"Encoded source frames: {sum(p['frames'] for p in parts):,}/{len(rows):,} (two outputs)", flush=True)
     parts.sort(key=lambda part: part["first"])
     if sum(part["frames"] for part in parts) != target["count"]:
         raise ValueError("Encoded segments do not cover all source frames")
@@ -119,6 +129,8 @@ def render(root: Path, config, rows):
     layout.frame(absolute_plan(rows[preview_slot], root), config).save(root / "preview.png")
     return {"render_id": render_id, "frames": len(rows), "frame_rate": target["frame_rate"],
             "video_duration_seconds": target["duration_seconds"], "audio_mode": config["audio_mode"],
-            "audio_policy": "original local track copied in full; original trailing audio may outlast video slightly",
+            "audio_policy": ("original local track prefix copied to the requested end; no audio reencoding"
+                             if config.get("end_seconds") is not None else
+                             "original local track copied in full; original trailing audio may outlast video slightly"),
             "presentation": "final-16x9.mp4", "satellite": "satellite-full.mp4", "preview": "preview.png",
             "layout": LAYOUT_VERSION, "frame_mapping": "one encoded video frame per decoded source frame; no dropping, duplication or interpolation"}

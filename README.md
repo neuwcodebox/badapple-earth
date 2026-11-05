@@ -316,6 +316,21 @@ uv run badapple-earth compare-silhouette --config config/silhouette.json --outpu
 uv run python -m badapple_earth.production.silhouette.temporal --config config/silhouette-color.json --output data/runs/p6-silhouette-color-20s
 ```
 
+### 10. 윤곽·색감 연속 선택의 전곡 제작과 중단·재개
+
+최신 전곡은 `config/silhouette-full.json`으로 218.5초 이전의 원본 6,549프레임을 사용한다. 완료한 비교 구간 900프레임의 검색·형태 점수를 재사용하고, 전체 구간에 하나의 색감 경로를 적용한다. 기존 영상은 보존한다.
+
+```powershell
+$env:OPENBLAS_NUM_THREADS = '8'
+$env:OMP_NUM_THREADS = '8'
+$env:NUMBA_NUM_THREADS = '8'
+uv run python -m badapple_earth.production.silhouette.full --resume
+```
+
+중단 요청은 다른 터미널에서 `uv run python -m badapple_earth.production.silhouette.full --pause`로 보낸다. 새 배치 배정을 멈추고 실행 중인 배치를 저장한 뒤 manifest가 `paused`로 바뀐다. 같은 `--resume` 명령은 중단 요청을 해제하고 이어간다. 갑자기 프로세스가 종료돼도 원자적으로 저장된 검색 체크포인트·평가 배치·사진·인코딩 구간을 재사용한다. 미완성 배치나 영상 구간만 다시 처리한다.
+
+출력은 `data/runs/p6-silhouette-color-full/`의 `final-16x9.mp4`와 `satellite-full.mp4`이며, 로컬 원본 오디오도 콘텐츠 끝까지 보존한다. 현재 단계는 루트 `manifest.json`, 검색 진행은 `retrieval/progress.json`, 정밀 평가는 루트 `progress.json`에서 확인한다. 기존 출처·좌표·변환의 반복 검수는 하지 않는다.
+
 ## 사용 방법
 
 기본 제작 흐름은 다음과 같다.

@@ -25,6 +25,7 @@ from ..assets import cached_photos,old_rgb_refs
 from ..render import encoder
 from ..variants.pipeline import write_table
 from .pipeline import comparison_frame,interval_frames
+from .control import batches
 
 VERSION = "shape-band-region-chroma-path-v1"
 
@@ -96,7 +97,7 @@ def describe_groups(groups,targets):
     return result
 
 
-def descriptors(root,run,metadata,pools,targets,workers):
+def descriptors(root,run,metadata,pools,targets,workers,pause_file=None):
     source = read_manifest(run)
     index = Path(source["config"]["index"])
     directories = {m["index_id"]:p for p,m,_ in members(index,read_manifest(index))}
@@ -121,14 +122,14 @@ def descriptors(root,run,metadata,pools,targets,workers):
     folder = root/"colors"
     folder.mkdir(exist_ok=True)
     paths = [folder/f"{i:05d}.parquet" for i in range(len(chunks))]
-    with ProcessPoolExecutor(max_workers=workers,mp_context=get_context("spawn")) as pool:
-        pending = {pool.submit(describe_groups,chunk,targets):paths[i]
-                   for i,chunk in enumerate(chunks) if not paths[i].exists()}
-        done = len(paths)-len(pending)
-        for future in as_completed(pending):
-            write_table(pending[future],future.result())
-            done += 1
-            print(f"Color descriptors: {done}/{len(paths)} batches",flush=True)
+    done = sum(p.exists() for p in paths)
+    def saved(path,rows):
+        nonlocal done
+        write_table(path,rows)
+        done += 1
+        print(f"Color descriptors: {done}/{len(paths)} batches",flush=True)
+    batches([((chunk,targets),paths[i]) for i,chunk in enumerate(chunks) if not paths[i].exists()],
+            describe_groups,saved,workers,pause_file)
     return {(r["slot"],r["dense_row"]):np.array(r["color"],np.float32)
             for p in paths for r in pq.read_table(p).to_pylist()}
 

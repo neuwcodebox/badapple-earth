@@ -1,6 +1,7 @@
 """Search the complete frozen view pool with region and outline routes."""
 
 from pathlib import Path
+from fractions import Fraction
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import time
@@ -13,6 +14,7 @@ from ...collection.windows import identity
 from ...evidence import write_json
 from ..correlation.features import multiscale
 from .features import VERSION, balanced_weights
+from .control import check_pause
 
 
 def feature_batches(path,begin,stop,batch,workers=3):
@@ -106,6 +108,31 @@ def search(run,root,config,targets,specifications):
     k = config["retrieval_k"]
     scores = np.full((2,len(fine),k),-np.inf,np.float32)
     positions = np.full(scores.shape,-1,np.int64)
+    reused = np.zeros(len(fine),bool)
+    if config.get("reuse_searches"):
+        import pyarrow.parquet as pq
+        all_targets = pq.read_table(run/"targets/targets.parquet").to_pylist()
+        raw_targets = np.load(run/"targets/gray_fine.npy",mmap_mode="r",allow_pickle=False)
+        query_ids = {row.tobytes():i for i,row in enumerate(unique)}
+        for previous_root in map(Path,config["reuse_searches"]):
+            manifest = read_manifest(previous_root)
+            prior = manifest["config"]
+            clips = prior.get("intervals",[{"start":prior.get("start",0),"duration":prior.get("duration",0)}])
+            previous_slots = [r["slot"] for clip in clips for r in all_targets
+                              if Fraction(str(clip["start"]))<=Fraction(r["source_pts"])*Fraction(r["source_time_base"])
+                              <Fraction(str(clip["start"]))+Fraction(str(clip["duration"]))]
+            expected = identity([VERSION,read_manifest(run/"targets")["target_set_id"],
+                                 [s["identity"] for s in specifications],previous_slots,k])
+            with np.load(previous_root/"retrieval.npz",allow_pickle=False) as saved:
+                if manifest["status"]!="complete" or str(saved["search_id"])!=expected or int(saved["source"])!=len(specifications):
+                    raise ValueError("Reuse only completed retrievals with the same frozen features and metric")
+                cached_scores,cached_positions,cached_inverse = saved["scores"],saved["positions"],saved["inverse"]
+                for i,slot in enumerate(previous_slots):
+                    query = query_ids.get(raw_targets[slot].reshape(-1).tobytes())
+                    if query is not None:
+                        local = int(cached_inverse[i])
+                        scores[:,query],positions[:,query] = cached_scores[:,local],cached_positions[:,local]
+                        reused[query] = True
     source_begin,offset_begin,previous = 0,0,0.
     path = root/"retrieval.npz"
     if path.exists():
@@ -115,9 +142,14 @@ def search(run,root,config,targets,specifications):
             scores,positions = saved["scores"].copy(),saved["positions"].copy()
             source_begin,offset_begin = int(saved["source"]),int(saved["offset"])
             previous = float(saved["elapsed_seconds"])
+    active = np.flatnonzero(~reused)
+    work_scores,work_positions = scores[:,active].copy(),positions[:,active].copy()
+    work_weights,work_weighted,work_norms,work_queries = weights[active],weighted[active],norms[active],queries[active]
+    print(f"Silhouette queries: {len(fine):,}; reused {int(reused.sum()):,}; searching {len(active):,}",flush=True)
     started = time.perf_counter()
     total = sum(s["rows"] for s in specifications)
     def checkpoint(source,offset,completed):
+        scores[:,active],positions[:,active] = work_scores,work_positions
         seconds = previous+time.perf_counter()-started
         temporary = path.with_suffix(".tmp")
         with temporary.open("wb") as stream:
@@ -125,10 +157,12 @@ def search(run,root,config,targets,specifications):
                      source=source,offset=offset,elapsed_seconds=seconds)
         temporary.replace(path)
         write_json(root/"progress.json",{"stage":"retrieval","completed_views":completed,"total_views":total,
-                   "unique_queries":len(fine),"elapsed_seconds":round(seconds,3),
+                   "unique_queries":len(fine),"reused_queries":int(reused.sum()),"searched_queries":len(active),"elapsed_seconds":round(seconds,3),
                    "remaining_seconds":round((total-completed)*seconds/max(completed,1))})
         print(f"Silhouette region + outline: {completed:,}/{total:,} views; {seconds:.1f}s",flush=True)
-    for source in range(source_begin,len(specifications)):
+        check_pause(config.get("pause_file",root/"pause.request"))
+    if not len(active):checkpoint(len(specifications),0,total)
+    for source in range(source_begin if len(active) else len(specifications),len(specifications)):
         spec = specifications[source]
         values = np.load(spec["features"],mmap_mode="r",allow_pickle=False)
         if values.shape != (spec["rows"],24,32) or values.dtype != np.uint8:
@@ -138,12 +172,12 @@ def search(run,root,config,targets,specifications):
             matrix = raw.reshape(len(raw),-1)
             squared = matrix*matrix
             indices = np.arange(spec["start"]+begin,spec["start"]+end,dtype=np.int64)
-            for q in range(0,len(fine),config["target_batch"]):
-                stop = min(q+config["target_batch"],len(fine))
-                region = weighted[q:stop]@matrix.T-weights[q:stop]@squared.T-norms[q:stop,None]
-                outline = queries[q:stop]@gradient.T
-                keep(scores[0,q:stop],positions[0,q:stop],region,indices)
-                keep(scores[1,q:stop],positions[1,q:stop],outline,indices)
+            for q in range(0,len(active),config["target_batch"]):
+                stop = min(q+config["target_batch"],len(active))
+                region = work_weighted[q:stop]@matrix.T-work_weights[q:stop]@squared.T-work_norms[q:stop,None]
+                outline = work_queries[q:stop]@gradient.T
+                keep(work_scores[0,q:stop],work_positions[0,q:stop],region,indices)
+                keep(work_scores[1,q:stop],work_positions[1,q:stop],outline,indices)
             if begin==begin_from or end==len(values) or (end//config["candidate_batch"])%8==0:
                 next_source,next_offset = (source+1,0) if end==len(values) else (source,end)
                 checkpoint(next_source,next_offset,spec["start"]+end)

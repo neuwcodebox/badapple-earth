@@ -22,6 +22,7 @@ from ..variants.bank import Bank
 from ..variants.full import member_mapping
 from ..variants.pipeline import write_table
 from .features import load_target, photo_features, evaluate
+from .control import batches
 
 
 def resolve_part(spec,positions,full_index):
@@ -40,11 +41,15 @@ def resolve_part(spec,positions,full_index):
     return rows
 
 
-def resolve_candidates(root,run,specs,positions,workers):
+def resolve_candidates(root,run,specs,positions,workers,reuse_roots=(),pause_file=None):
     positions = sorted(set(int(p) for p in positions))
     table = pq.read_table(run/"candidates.parquet")
     table = table.filter(pc.is_in(table["dense_row"],value_set=pa.array(positions,type=pa.int64())))
     result = {r["dense_row"]:r for r in table.to_pylist()}
+    for previous in reuse_roots:
+        previous = pq.read_table(Path(previous)/"candidates.parquet")
+        previous = previous.filter(pc.is_in(previous["dense_row"],value_set=pa.array(positions,type=pa.int64())))
+        result.update({r["dense_row"]:r for r in previous.to_pylist()})
     missing = np.array(sorted(set(positions)-set(result)),np.int64)
     source = read_manifest(run)
     folder = root/"metadata"
@@ -55,11 +60,8 @@ def resolve_candidates(root,run,specs,positions,workers):
         for part,chunk in enumerate(np.array_split(selected,max(1,workers//2))):
             if len(chunk):
                 jobs.append((spec,chunk,folder/f"{number:02d}-{part:02d}.parquet"))
-    with ProcessPoolExecutor(max_workers=workers,mp_context=get_context("spawn")) as pool:
-        pending = {pool.submit(resolve_part,spec,chunk,source["config"]["index"]):path
-                   for spec,chunk,path in jobs if not path.exists()}
-        for future in as_completed(pending):
-            write_table(pending[future],future.result())
+    batches([((spec,chunk,source["config"]["index"]),path) for spec,chunk,path in jobs if not path.exists()],
+            resolve_part,write_table,workers,pause_file)
     for _,_,path in jobs:
         result.update({r["dense_row"]:r for r in pq.read_table(path).to_pylist()})
     if set(result) != set(positions):
