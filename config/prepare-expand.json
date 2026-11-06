@@ -1,0 +1,20 @@
+{
+  "sources": [
+    "data/index/p5-expand-naip-100k/part-01",
+    "data/index/p5-expand-naip-100k/part-02",
+    "data/index/p5-expand-linz-100k/part-01",
+    "data/index/p5-expand-linz-100k/part-02",
+    "data/index/p5-expand-netherlands-50k/part-01",
+    "data/index/p5-expand-netherlands-50k/part-02",
+    "data/index/p5-expand-swiss-50k/part-01",
+    "data/index/p5-expand-swiss-50k/part-02"
+  ],
+  "output": "data/prepared/p5-expand-300k",
+  "collection_state": ".local/expansion-20261106.json",
+  "pause_file": ".local/expansion-20261106.pause.json",
+  "workers": 4,
+  "min_free_disk_gib": 30,
+  "min_chunk_parents": 5000,
+  "max_chunk_parents": 20000,
+  "poll_seconds": 30
+}

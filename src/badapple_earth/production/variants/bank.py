@@ -22,6 +22,7 @@ from ...collection.storage import writer_lock
 from ...evidence import write_json
 from ...matching.affine import VERSION, variants, recipe, transform, metadata
 from ...matching.photos import read_rgb_rows
+from ..silhouette.control import check_pause
 
 _OLD_RGB = {}
 
@@ -115,8 +116,8 @@ class Bank:
                         missing.update(x.decode() for x in identifiers)
                     cursor = stop
             all_ids = np.concatenate(ids)
-            if cursor != parent["rows"] or len(np.unique(all_ids)) != cursor:
-                raise ValueError("Parent packing must cover the frozen places exactly once")
+            if cursor != parent["rows"]:
+                raise ValueError("Parent packing must cover the frozen photo rows")
             np.save(self.root/"parent_ids.npy",all_ids,allow_pickle=False)
             ranks = np.empty(cursor,np.int32)
             ranks[np.argsort(all_ids,kind="stable")] = np.arange(cursor,dtype=np.int32)
@@ -222,6 +223,8 @@ def build(config):
     workers = config["workers"]
     if workers < 1:
         raise ValueError("Feature generation needs at least one worker")
+    pause_file = config.get("pause_file")
+    check_pause(pause_file)
     names = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "NUMBA_NUM_THREADS")
     previous = {key:os.environ.get(key) for key in names}
     root = Path(config["bank"])
@@ -243,7 +246,7 @@ def build(config):
                         initializer=initialize,initargs=(str((root/"legacy-rgb.parquet").resolve()),)) as pool:
                     pending = {}
                     for _ in range(workers):
-                        number = next(tasks,None)
+                        number = None if pause_file and Path(pause_file).exists() else next(tasks,None)
                         if number is not None:
                             pending[pool.submit(build_group,bank.jobs[number],bank.specification,bank.size)] = number
                     while pending:
@@ -259,14 +262,15 @@ def build(config):
                                 "views_per_second":round(rate,2),"remaining_seconds":round((bank.state["rows"]-bank.state["completed_views"])/rate),
                                 "updated_at":datetime.now(timezone.utc).isoformat()})
                             print(f"Affine features: {bank.state['completed_views']:,}/{bank.state['rows']:,}; {rate:,.0f} views/s",flush=True)
-                            number = next(tasks,None)
+                            number = None if pause_file and Path(pause_file).exists() else next(tasks,None)
                             if number is not None:
                                 pending[pool.submit(build_group,bank.jobs[number],bank.specification,bank.size)] = number
+                check_pause(pause_file)
                 bank.state["finished_at"] = datetime.now(timezone.utc).isoformat()
                 write_json(root/"manifest.json",bank.state)
                 return bank.state
             except BaseException as error:
-                bank.state.update(status="paused" if isinstance(error,KeyboardInterrupt) else "failed",
+                bank.state.update(status="paused" if isinstance(error,(KeyboardInterrupt,InterruptedError)) else "failed",
                                   error_type=type(error).__name__)
                 write_json(root/"manifest.json",bank.state)
                 raise

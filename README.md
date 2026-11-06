@@ -268,6 +268,12 @@ uv run badapple-earth collect-parallel --config config/collect-expand-swiss.json
 
 ### 7. 선택 실험: 30° 회전·작은 크롭
 
+추가 수집과 동시에 신규 shard의 검색 인덱스를 준비하려면 다음 명령을 별도 터미널에서 실행한다. `prepare-expand.json`은 저장된 신규 RGB만 읽어 packing·32×24 fine 배열·30° 회전/75% 크롭 특징을 만들며, 이후 새 shard도 이어서 처리한다. 수집과 같은 일시중지 표식을 사용한다. 두 작업의 진행·중단·재개는 [병행 준비 기록](docs/history/2026-11-07-P5-live-preparation.md)을 따른다.
+
+```powershell
+uv run python -m badapple_earth.production.variants.preparation --config config/prepare-expand.json
+```
+
 고정된 기존 장소의 로컬 RGB를 재사용한다. `views-index`와 `compare-views`는 서로 다른 터미널에서 병행할 수 있다. 검색은 인덱서가 완료한 그룹만 읽고, 두 명령 모두 체크포인트부터 재개한다.
 
 ```powershell

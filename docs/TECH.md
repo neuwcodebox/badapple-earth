@@ -363,6 +363,8 @@ data/
 
 `combine --disjoint-sources`는 이미 중복 정리한 bundle들의 소스 namespace가 실제로 겹치지 않을 때만 저장한 수량·할당 통계·참조 목록을 결합한다. tile ID에 source ID가 포함되므로 Sentinel-2와 NAIP/LINZ 결합에서 기존 100만의 타일 표를 다시 읽지 않는다. 같은 소스가 겹치면 이 경로를 거부하고 일반 중복 검사를 사용한다.
 
+수집과 병행하는 `production.variants.preparation`은 source index ID·공개 shard ID로 미처리분만 묶어 불변 snapshot을 만든다. 타일 표의 중복을 검사하지 않으며, 기존 packing·fine·affine builder로 새 RGB의 검색 인덱스를 준비한다. 묶음별 입력·행 매핑·완료 그룹을 저장해 수집 추가분이나 재부팅에도 완료 계산을 재사용한다. affine builder의 `pause_file`은 신규 그룹 배정을 멈추고 실행 중 그룹을 저장한 뒤 종료한다. 구체적인 자원·구성·실행 상태는 [병행 준비 기록](history/2026-11-07-P5-live-preparation.md)에 둔다.
+
 32×24 전곡 제작은 `incremental_base_run`의 완료된 기존 Top-K와 `incremental_index`의 고정 추가 후보만 검색한 Top-K를 합칠 수 있다. 같은 타깃 ID·쿼리 매핑·격자·metric·회전·K와 서로 겹치지 않는 후보 합집합을 검증한다. 각 후보군의 Top-K 합집합을 SSE·view ID로 정렬하면 전체 전수 검색의 Top-K와 같다. 기존 dense row 번호를 유지하고 추가 후보에 기존 view 수만큼 offset을 주므로 버전·타깃이 일치하는 기존 MS-SSIM 점수도 재사용한다. 임의로 다른 인덱스의 점수를 재사용하지 않는다. 입력 프레임·사진·원본 디테일은 필요한 항목만 로컬 캐시에서 재사용하고 새 후보만 계산한다.
 
 다음은 **4:3, WebP 평균 30KB/장이라는 가정**의 계획치다. 다운로드 트래픽·원본 COG·metadata·edge·인덱스·selected PNG·파일시스템 overhead는 제외되어 있다. 1만 장에서 실제 크기를 측정한다.
