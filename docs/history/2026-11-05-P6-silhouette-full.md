@@ -34,3 +34,7 @@ uv run python -m badapple_earth.production.silhouette.full --pause
 사용자가 검색만 끝내고 일시중지하도록 요청했다. `--stop-after-search` 옵션을 추가해 검색 완료 직후 후보 구성보다 먼저 `pause.request`와 `completed_stage: retrieval`을 저장하고 `paused`로 종료하게 했다. 기존 검색 체크포인트를 이어서 **2026-11-05 22:34:33 KST**에 **28,800,000/28,800,000 view** 검색을 완료했고 프로세스는 종료 코드 0으로 멈췄다. 누적 검색 시간은 **3,581.890초**다. root manifest는 `paused`, 검색 잔여 시간은 0이다. 후속 후보 구성·메타데이터·정밀 평가·색감 선택·영상 생성은 시작하지 않았다.
 
 저장 경로는 `data/runs/p6-silhouette-color-full/retrieval/retrieval.npz`와 `progress.json`, 루트 `manifest.json`이다. 로그는 `.local/silhouette-full-search-only.log`다. 재개 지시가 오면 `--stop-after-search` 없이 `--resume`을 실행한다. 완료한 검색은 다시 계산하지 않고 이후 단계부터 이어가며, 위의 완료 시각 예상은 일시중단으로 더 이상 유효하지 않다. 새 예상은 재개 후 안내한다.
+
+## 11월 6일 후속 단계 재개
+
+사용자의 “이어서 하자” 지시로 **18:11 KST**에 `uv run --no-sync python -u -m badapple_earth.production.silhouette.full --resume`을 실행했다. 부모의 BLAS·OMP·Numba는 8스레드이며 작업자 내부는 기존 제한대로 1스레드다. 완료한 검색 체크포인트를 재사용했고 `shortlists.parquet`를 저장한 뒤 **18:11:44 KST에 metadata 단계**로 넘어갔다. 로그는 `.local/silhouette-full-20261106.log`다. 초기 남은 시간 추정은 1–2시간, **19:15–20:15 KST**다. 정밀 평가 처리 속도가 나오기 전의 추정이며 최종 영상은 아직 미완료다.
