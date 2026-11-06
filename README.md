@@ -333,6 +333,8 @@ uv run python -m badapple_earth.production.silhouette.full --resume
 
 출력은 `data/runs/p6-silhouette-color-full/`의 `final-16x9.mp4`와 `satellite-full.mp4`이며, 로컬 원본 오디오도 콘텐츠 끝까지 보존한다. 현재 단계는 루트 `manifest.json`, 검색 진행은 `retrieval/progress.json`, 정밀 평가는 루트 `progress.json`에서 확인한다. 기존 출처·좌표·변환의 반복 검수는 하지 않는다.
 
+같은 선택을 흑백으로 보는 버전은 해당 폴더 아래 `grayscale/final-16x9.mp4`와 `grayscale/satellite-full.mp4`다. 완성한 컬러 영상의 채도를 제거했으며 재검색·재선택 없이 시간축과 오디오를 유지했다. 컬러 원본도 보존한다.
+
 ## 사용 방법
 
 기본 제작 흐름은 다음과 같다.

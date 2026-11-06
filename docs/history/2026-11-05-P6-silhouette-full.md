@@ -56,3 +56,15 @@ uv run python -m badapple_earth.production.silhouette.full --pause
 - 렌더 ID: `1115155f90553b3641e8cc04b1edf5118db1868834592dab5961e7a960fcdd9c`.
 
 완료 근거는 정상 인코더·mux 종료, 전체 구간 완료 기록과 실제 MP4 출력이다. 기존 출처·좌표·시간축·정상 다운로드의 반복 검수, 새 전체 디코딩 검수, 전곡 재생에 의한 시각 평가는 하지 않았다. 사용자 재생 평가와 외부 공개는 별도다. 모든 기존 영상과 계산 결과를 보존한다.
+
+## 동일 선택의 흑백 버전
+
+사용자가 흑백으로 만들면 어떨지 제안해 완성한 두 컬러 영상에서 `hue=s=0`으로 채도만 제거했다. 사진 선택·검색·점수는 다시 계산하지 않았다. `-fps_mode passthrough`, H.264 medium·CRF18·영상당 4스레드, `-c:a copy`로 두 영상을 병렬 변환했다. 밝기·대비를 추가 조절하거나 이진 실루엣으로 만들지 않았다. 설명 화면은 UI를 포함해 전체를 흑백으로 변환했다.
+
+실행은 `.local/make_gray_full.py`, 로그는 `.local/grayscale-full.log`와 `grayscale/`의 각 encode 로그·progress다. **2026-11-06 19:59:38 KST, 142.969초**에 두 인코더가 정상 완료했고 파생 manifest는 `complete`다. 두 progress 모두 dup/drop 0으로 종료했다. 추가 디코딩·출처·좌표·오디오 전수 재검수는 하지 않았다.
+
+- `data/runs/p6-silhouette-color-full/grayscale/final-16x9.mp4`: **203,076,879바이트**.
+- `data/runs/p6-silhouette-color-full/grayscale/satellite-full.mp4`: **174,138,483바이트**.
+- `grayscale/manifest.json`: 원본 production ID, 변환 필터, 오디오 복사·선택 재계산 없음, 실행 시각을 기록한다.
+
+이는 기존 색감 연속 알고리즘으로 고른 사진의 흑백 표현 비교다. 색감 항을 제거해 새로 고른 결과는 아니며, 컬러와 흑백 중 무엇을 채택할지는 사용자 재생 평가 대상이다.
