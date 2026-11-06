@@ -18,6 +18,14 @@ from badapple_earth.production.silhouette.full import reduced
 def square(value):return value*value
 
 
+def test_completed_candidate_reduction_skips_old_score_job_reconstruction(tmp_path,monkeypatch):
+    from badapple_earth.production.silhouette.full import score_all
+    (tmp_path/'choices.parquet').touch()
+    def forbidden(*args,**kwargs):raise AssertionError('Completed scores must not be read or rebuilt')
+    monkeypatch.setattr('badapple_earth.production.silhouette.full.pq.read_table',forbidden)
+    assert score_all(tmp_path,tmp_path,[],{}, {},set()) == []
+
+
 def test_pause_drains_saved_batch_and_resume_runs_only_unfinished_jobs(tmp_path):
     flag = tmp_path/'pause.request'
     saved = {}

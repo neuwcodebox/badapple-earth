@@ -13,6 +13,7 @@ import time
 import numpy as np
 from PIL import Image
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from ...collection.bundle import members,read_manifest
@@ -75,6 +76,7 @@ def shortlists(root,run,targets,result):
 
 
 def score_all(root,run,targets,metadata,config,reused_slots):
+    if (root/"choices.parquet").exists():return []
     table = pq.read_table(root/"shortlists.parquet")
     positions = table["dense_row"].combine_chunks().to_numpy()
     slots = table["slot"].combine_chunks().to_numpy()
@@ -253,7 +255,11 @@ def produce(config,output,resume=False,stop_after_search=False):
             "started_at":datetime.now(timezone.utc).isoformat()}
         if state["production_id"]!=production_id:raise ValueError("Full output belongs to a different algorithm or input")
         if state["status"]=="complete":return state
-        if resume and pause_file.exists():pause_file.unlink()
+        if resume:
+            if pause_file.exists():pause_file.unlink()
+            state.pop("error_type",None)
+            state.pop("paused_at",None)
+            state["resumed_at"] = datetime.now(timezone.utc).isoformat()
         check_pause(pause_file)
         runtime = {**config,"pause_file":str(pause_file)}
         targets = [r for r in pq.read_table(run/"targets/targets.parquet").to_pylist()
@@ -274,7 +280,14 @@ def produce(config,output,resume=False,stop_after_search=False):
             del result
             stage("metadata")
             if (root/"candidates.parquet").exists():
-                metadata = {r["dense_row"]:r for r in pq.read_table(root/"candidates.parquet").to_pylist()}
+                table = pq.read_table(root/"candidates.parquet")
+                if (root/"choices.parquet").exists():
+                    wanted = set()
+                    for name in ("choices.parquet","display.parquet","selected.parquet"):
+                        if (root/name).exists():
+                            wanted.update(pq.read_table(root/name,columns=["dense_row"])["dense_row"].to_pylist())
+                    table = table.filter(pc.is_in(table["dense_row"],value_set=pa.array(sorted(wanted),type=pa.int64())))
+                metadata = {r["dense_row"]:r for r in table.to_pylist()}
             else:
                 positions = np.unique(pq.read_table(root/"shortlists.parquet",columns=["dense_row"])["dense_row"].combine_chunks().to_numpy())
                 metadata = resolve_candidates(root,run,sources(config),positions,config["workers"],config["reuse_searches"],str(pause_file))
