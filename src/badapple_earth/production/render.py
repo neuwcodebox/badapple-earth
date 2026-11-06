@@ -12,7 +12,7 @@ from ..collection.windows import identity
 from ..evidence import write_json
 from . import layout
 
-LAYOUT_VERSION = "minimal-counters-original-retrieval-ranks-available-places-v4"
+LAYOUT_VERSION = "compact-hero-inline-provenance-v5"
 
 
 def absolute_plan(row, root):
@@ -54,6 +54,7 @@ def segment(root_string, rows, fps, config, render_id):
             presentation = layout.frame(plan, config)
             processes["presentation"].stdin.write(presentation.tobytes())
             photo = layout.resized(plan["selected_image"], *config["crop"][2:])
+            if config.get("monochrome"):photo = photo.convert("L").convert("RGB")
             processes["satellite"].stdin.write(photo.tobytes())
         for process in processes.values():
             process.stdin.close()

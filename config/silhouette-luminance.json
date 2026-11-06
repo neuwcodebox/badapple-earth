@@ -1,0 +1,9 @@
+{
+  "source": "data/runs/p6-silhouette-color-full",
+  "continuity_weight": 0.2,
+  "workers": 8,
+  "render_workers": 4,
+  "encoder_threads": 2,
+  "segment_frames": 180,
+  "monochrome": true
+}

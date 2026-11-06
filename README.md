@@ -335,6 +335,16 @@ uv run python -m badapple_earth.production.silhouette.full --resume
 
 같은 선택을 흑백으로 보는 버전은 해당 폴더 아래 `grayscale/final-16x9.mp4`와 `grayscale/satellite-full.mp4`다. 완성한 컬러 영상의 채도를 제거했으며 재검색·재선택 없이 시간축과 오디오를 유지했다. 컬러 원본도 보존한다.
 
+### 11. 밝기 연속 선택과 여백을 줄인 흑백 전곡
+
+흑백 제작은 완료한 형태 후보 안에서 색감 대신 밝기·명암 분포가 이어지는 경로를 고른다. 검색·형태 점수를 재계산하지 않는다. 설명 화면은 사진을 크게 배치하고 좌표·촬영일·출처를 하단 한 줄에 모으며 알고리즘명은 표시하지 않는다.
+
+```powershell
+uv run python -m badapple_earth.production.silhouette.monochrome --resume
+```
+
+설정은 `config/silhouette-luminance.json`, 출력은 `data/runs/p6-silhouette-luminance-full/`의 `final-16x9.mp4`와 `satellite-full.mp4`다. 중단하려면 같은 명령의 `--resume` 대신 `--pause`를 사용한다. 기존 컬러와 단순 흑백 변환 영상도 보존한다.
+
 ## 사용 방법
 
 기본 제작 흐름은 다음과 같다.

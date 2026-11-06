@@ -28,6 +28,7 @@ from .pipeline import comparison_frame,interval_frames
 from .control import batches
 
 VERSION = "shape-band-region-chroma-path-v1"
+LUMINANCE_VERSION = "region-luminance-mean-soft-hist16-v1"
 
 
 def color_descriptor(image,mask):
@@ -43,6 +44,21 @@ def color_descriptor(image,mask):
         bins = np.minimum((values[:,1:]*6).astype(int),5)
         hist = np.bincount(bins[:,0]*6+bins[:,1],minlength=36)/len(values)
         parts.extend((np.sqrt(.1)*mean,np.sqrt(.4)*np.sqrt(hist)))
+    return np.concatenate(parts).astype(np.float32)
+
+
+def luminance_descriptor(image,mask):
+    pixels = np.asarray(image.convert("L").resize((64,48),Image.Resampling.BOX),np.float64)/255
+    mask = np.asarray(mask,bool)
+    parts = []
+    for region in (mask,~mask):
+        values = pixels[region] if region.any() else pixels.reshape(-1)
+        position = values*15
+        lower = np.floor(position).astype(int)
+        fraction = position-lower
+        hist = (np.bincount(lower,weights=1-fraction,minlength=16)
+                +np.bincount(np.minimum(lower+1,15),weights=fraction,minlength=16))/len(values)
+        parts.extend((np.array([np.sqrt(.1)*values.mean()]),np.sqrt(.4)*np.sqrt(hist)))
     return np.concatenate(parts).astype(np.float32)
 
 
@@ -81,7 +97,9 @@ def path(pools,descriptors,weight):
     return list(reversed(selected))
 
 
-def describe_groups(groups,targets):
+def describe_groups(groups,targets,mode="color"):
+    descriptor = luminance_descriptor if mode=="luminance" else color_descriptor
+    column = "luminance" if mode=="luminance" else "color"
     masks = {}
     result = []
     for filename,jobs in groups:
@@ -93,11 +111,12 @@ def describe_groups(groups,targets):
                     with Image.open(targets[slot]) as target:
                         masks[slot] = np.asarray(target.convert("L").resize((64,48),Image.Resampling.BOX))>127
                 result.append({"slot":slot,"dense_row":row["dense_row"],
-                               "color":color_descriptor(image,masks[slot]).tolist()})
+                               column:descriptor(image,masks[slot]).tolist()})
     return result
 
 
-def descriptors(root,run,metadata,pools,targets,workers,pause_file=None):
+def descriptors(root,run,metadata,pools,targets,workers,pause_file=None,mode="color"):
+    if mode not in ("color","luminance"):raise ValueError("Unknown continuity descriptor")
     source = read_manifest(run)
     index = Path(source["config"]["index"])
     directories = {m["index_id"]:p for p,m,_ in members(index,read_manifest(index))}
@@ -119,7 +138,8 @@ def descriptors(root,run,metadata,pools,targets,workers,pause_file=None):
         grouped[str(filename.resolve())].append((offset,view,slots))
     groups = sorted(grouped.items())
     chunks = [groups[i:i+24] for i in range(0,len(groups),24)]
-    folder = root/"colors"
+    column = "luminance" if mode=="luminance" else "color"
+    folder = root/("luminance" if mode=="luminance" else "colors")
     folder.mkdir(exist_ok=True)
     paths = [folder/f"{i:05d}.parquet" for i in range(len(chunks))]
     done = sum(p.exists() for p in paths)
@@ -127,10 +147,10 @@ def descriptors(root,run,metadata,pools,targets,workers,pause_file=None):
         nonlocal done
         write_table(path,rows)
         done += 1
-        print(f"Color descriptors: {done}/{len(paths)} batches",flush=True)
-    batches([((chunk,targets),paths[i]) for i,chunk in enumerate(chunks) if not paths[i].exists()],
+        print(f"{mode.capitalize()} descriptors: {done}/{len(paths)} batches",flush=True)
+    batches([((chunk,targets,mode),paths[i]) for i,chunk in enumerate(chunks) if not paths[i].exists()],
             describe_groups,saved,workers,pause_file)
-    return {(r["slot"],r["dense_row"]):np.array(r["color"],np.float32)
+    return {(r["slot"],r["dense_row"]):np.array(r[column],np.float32)
             for p in paths for r in pq.read_table(p).to_pylist()}
 
 

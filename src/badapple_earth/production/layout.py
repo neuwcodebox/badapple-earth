@@ -9,9 +9,9 @@ BG = "#0b111a"
 MUTED = "#8292a6"
 INK = "#eaf0f6"
 ACCENT = "#49e1c2"
-SOURCE = (40, 395, 288, 216)
-HERO = (728, 72, 1152, 862)
-THUMBS = [(416, 52 + i * 190, 192, 144) for i in range(5)]
+SOURCE = (20, 430, 250, 187)
+HERO = (552, 20, 1344, 1005)
+THUMBS = [(310, 28 + i * 203, 206, 154) for i in range(5)]
 
 
 @lru_cache(maxsize=32)
@@ -60,17 +60,20 @@ def connections(selected, count=5):
     draw = Pen()
     sx, sy, sw, sh = SOURCE
     origin = (sx + sw + 2, sy + sh // 2)
+    branch = (origin[0]+THUMBS[0][0])//2
     for x, y, width, height in THUMBS[:count]:
         center = y + height // 2
-        draw.line([origin, (370, origin[1]), (370, center), (x - 12, center)], fill="#293645", width=1, joint="curve")
+        draw.line([origin, (branch, origin[1]), (branch, center), (x - 8, center)], fill="#293645", width=1, joint="curve")
     chosen_center = THUMBS[selected][1] + THUMBS[selected][3] // 2
-    draw.line([origin, (370, origin[1]), (370, chosen_center), (404, chosen_center)], fill=ACCENT, width=2, joint="curve")
-    start, end = (616, chosen_center), (716, HERO[1] + HERO[3] // 2)
+    draw.line([origin, (branch, origin[1]), (branch, chosen_center), (THUMBS[0][0]-8, chosen_center)], fill=ACCENT, width=2, joint="curve")
+    start, end = (THUMBS[0][0]+THUMBS[0][2]+8, chosen_center), (HERO[0]-8, HERO[1] + HERO[3] // 2)
+    first_control = start[0]+(end[0]-start[0])*.4
+    second_control = start[0]+(end[0]-start[0])*.6
     curve = []
     for i in range(65):
         t = i / 64
         u = 1 - t
-        curve.append((round(u**3*start[0] + 3*u*u*t*682 + 3*u*t*t*656 + t**3*end[0]),
+        curve.append((round(u**3*start[0] + 3*u*u*t*first_control + 3*u*t*t*second_control + t**3*end[0]),
                       round(u**3*start[1] + 3*u*u*t*start[1] + 3*u*t*t*end[1] + t**3*end[1])))
     draw.line(curve + [(HERO[0], end[1])], fill="#153b39", width=6)
     draw.line(curve + [(HERO[0], end[1])], fill=ACCENT, width=2)
@@ -100,14 +103,16 @@ def frame(plan, config):
     x, y, width, height = HERO
     canvas.paste(resized(plan["selected_image"], width, height), (x, y))
     draw.rectangle((x - 1, y - 1, x + width, y + height), outline="#536074", width=1)
-    draw.text((x, 960), plan["caption"], font=font(regular, 19), fill=INK)
-    draw.text((416, 24), plan.get("score_label", "MSE"), font=font(regular, 12), fill=MUTED)
-    draw.text((40, 640), timestamp(plan["time"]) + " / " + timestamp(plan["duration"]), font=font(regular, 18), fill=INK)
-    draw.text((328, 670), f"{plan['slot']+1:,} / {plan['total']:,}", anchor="ra", font=font(regular, 14), fill=MUTED)
-    draw.line((40, 708, 328, 708), fill="#29394b", width=2)
-    draw.line((40, 708, 40 + 288 * (plan["slot"] + 1) / plan["total"], 708), fill=ACCENT, width=2)
-    draw.text((1880, 1044), plan.get("credit", "Contains modified Copernicus Sentinel data"), anchor="ra", font=font(regular, 11), fill=MUTED)
-    return canvas
+    metadata = plan["caption"]+"   ·   "+plan.get("credit", "Contains modified Copernicus Sentinel data")
+    size = 17
+    while size>8 and draw.textlength(metadata,font=font(regular,size))>width:
+        size -= 1
+    draw.text((x,1042),metadata,font=font(regular,size),fill=INK)
+    draw.text((sx,sy+sh+25),timestamp(plan["time"])+" / "+timestamp(plan["duration"]),font=font(regular,18),fill=INK)
+    draw.text((sx+sw,sy+sh+55),f"{plan['slot']+1:,} / {plan['total']:,}",anchor="ra",font=font(regular,14),fill=MUTED)
+    draw.line((sx,sy+sh+90,sx+sw,sy+sh+90),fill="#29394b",width=2)
+    draw.line((sx,sy+sh+90,sx+sw*(plan["slot"]+1)/plan["total"],sy+sh+90),fill=ACCENT,width=2)
+    return canvas.convert("L").convert("RGB") if config.get("monochrome") else canvas
 
 
 def location_caption(row):

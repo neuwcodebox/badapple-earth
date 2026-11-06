@@ -193,7 +193,7 @@ def choose_colors(root,run,targets,metadata,config):
     write_table(destination,records)
 
 
-def assets(root,run,targets,metadata,config):
+def assets(root,run,targets,metadata,config,reuse_assets=None):
     if (root/"frame-plan.parquet").exists():return
     source = read_manifest(run)
     selected = pq.read_table(root/"selected.parquet").to_pylist()
@@ -209,12 +209,20 @@ def assets(root,run,targets,metadata,config):
         for row in rows:photos[row["view_id"]] = metadata[row["dense_row"]]
     values = list(photos.values())
     for start in range(0,len(values),128):
-        cached_photos(run,root,values[start:start+128],source["config"],(256,191),"assets/thumbs")
+        cached_photos(Path(reuse_assets) if reuse_assets else run,root,values[start:start+128],source["config"],(256,191),"assets/thumbs")
         check_pause(config["pause_file"])
     index = Path(source["config"]["index"])
     directories = {m["index_id"]:p for p,m,_ in members(index,read_manifest(index))}
     native,groups = root/"assets/selected",defaultdict(dict)
     native.mkdir(exist_ok=True,parents=True)
+    if reuse_assets:
+        import shutil
+        for row in selected:
+            destination = native/(row["view_id"]+".png")
+            saved = Path(reuse_assets)/"assets/selected"/destination.name
+            if saved.exists() and not destination.exists():
+                try:destination.hardlink_to(saved)
+                except OSError:shutil.copyfile(saved,destination)
     for row in selected:
         if row["window"][2]>256:groups[row["index_member"],row["scene_id"]][row["view_id"]] = row
     markers = root/"native"
