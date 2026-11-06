@@ -1,0 +1,518 @@
+{
+  "requester_pays": false,
+  "widths": [
+    256,
+    512,
+    1024,
+    2048
+  ],
+  "scale_weights": [
+    20,
+    30,
+    35,
+    15
+  ],
+  "aspect_ratio": [
+    1444,
+    1080
+  ],
+  "preview_width": 256,
+  "max_cloud_ratio": 0.02,
+  "stride_fraction": 0.5,
+  "block_size": 2048,
+  "seed": 67,
+  "report_samples": 200,
+  "collect_rotations": true,
+  "cache_rgb": true,
+  "max_memory_mb": 3072,
+  "max_disk_mb": 18000,
+  "min_free_disk_mb": 30720,
+  "max_block_attempts": 3,
+  "max_blocks_per_scene": 32,
+  "source": "planetarycomputer-naip",
+  "datetime": "2015-01-01/2023-12-31",
+  "scenes_per_aoi": 8,
+  "catalog_limit_per_aoi": 40,
+  "areas": [
+    {
+      "id": "naip-new-boston",
+      "terrain_group": "urban",
+      "bbox": [
+        -71.16,
+        42.28,
+        -70.96,
+        42.44
+      ]
+    },
+    {
+      "id": "naip-new-new-york",
+      "terrain_group": "urban",
+      "bbox": [
+        -74.07,
+        40.67,
+        -73.87,
+        40.83
+      ]
+    },
+    {
+      "id": "naip-new-chicago",
+      "terrain_group": "urban",
+      "bbox": [
+        -87.73,
+        41.8,
+        -87.53,
+        41.96
+      ]
+    },
+    {
+      "id": "naip-new-san-francisco",
+      "terrain_group": "urban",
+      "bbox": [
+        -122.53,
+        37.68,
+        -122.33,
+        37.84
+      ]
+    },
+    {
+      "id": "naip-new-los-angeles",
+      "terrain_group": "urban",
+      "bbox": [
+        -118.34,
+        33.98,
+        -118.14,
+        34.14
+      ]
+    },
+    {
+      "id": "naip-new-houston",
+      "terrain_group": "urban",
+      "bbox": [
+        -95.47,
+        29.68,
+        -95.27,
+        29.84
+      ]
+    },
+    {
+      "id": "naip-new-seattle",
+      "terrain_group": "urban",
+      "bbox": [
+        -122.43,
+        47.52,
+        -122.23,
+        47.68
+      ]
+    },
+    {
+      "id": "naip-new-portland",
+      "terrain_group": "urban",
+      "bbox": [
+        -122.78,
+        45.44,
+        -122.58,
+        45.6
+      ]
+    },
+    {
+      "id": "naip-new-salinas",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -121.6,
+        36.52,
+        -121.4,
+        36.68
+      ]
+    },
+    {
+      "id": "naip-new-imperial",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -115.7,
+        32.82,
+        -115.5,
+        32.98
+      ]
+    },
+    {
+      "id": "naip-new-red-river",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -97.0,
+        46.92,
+        -96.8,
+        47.08
+      ]
+    },
+    {
+      "id": "naip-new-illinois",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -89.1,
+        40.42,
+        -88.9,
+        40.58
+      ]
+    },
+    {
+      "id": "naip-new-indiana",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -86.6,
+        40.22,
+        -86.4,
+        40.38
+      ]
+    },
+    {
+      "id": "naip-new-wisconsin",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -89.4,
+        43.22,
+        -89.2,
+        43.38
+      ]
+    },
+    {
+      "id": "naip-new-ohio",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -83.7,
+        40.02,
+        -83.5,
+        40.18
+      ]
+    },
+    {
+      "id": "naip-new-arkansas-delta",
+      "terrain_group": "agriculture",
+      "bbox": [
+        -91.0,
+        34.52,
+        -90.8,
+        34.68
+      ]
+    },
+    {
+      "id": "naip-new-olympic",
+      "terrain_group": "forest",
+      "bbox": [
+        -123.8,
+        47.42,
+        -123.6,
+        47.58
+      ]
+    },
+    {
+      "id": "naip-new-adirondack",
+      "terrain_group": "forest",
+      "bbox": [
+        -74.3,
+        43.92,
+        -74.1,
+        44.08
+      ]
+    },
+    {
+      "id": "naip-new-west-virginia",
+      "terrain_group": "forest",
+      "bbox": [
+        -80.4,
+        38.32,
+        -80.2,
+        38.48
+      ]
+    },
+    {
+      "id": "naip-new-new-hampshire",
+      "terrain_group": "forest",
+      "bbox": [
+        -71.6,
+        44.12,
+        -71.4,
+        44.28
+      ]
+    },
+    {
+      "id": "naip-new-alabama",
+      "terrain_group": "forest",
+      "bbox": [
+        -87.2,
+        34.02,
+        -87.0,
+        34.18
+      ]
+    },
+    {
+      "id": "naip-new-south-carolina",
+      "terrain_group": "forest",
+      "bbox": [
+        -80.5,
+        33.12,
+        -80.3,
+        33.28
+      ]
+    },
+    {
+      "id": "naip-new-montana",
+      "terrain_group": "forest",
+      "bbox": [
+        -113.8,
+        47.22,
+        -113.6,
+        47.38
+      ]
+    },
+    {
+      "id": "naip-new-minnesota",
+      "terrain_group": "forest",
+      "bbox": [
+        -92.1,
+        47.72,
+        -91.9,
+        47.88
+      ]
+    },
+    {
+      "id": "naip-new-st-louis",
+      "terrain_group": "river",
+      "bbox": [
+        -90.3,
+        38.62,
+        -90.1,
+        38.78
+      ]
+    },
+    {
+      "id": "naip-new-new-orleans",
+      "terrain_group": "river",
+      "bbox": [
+        -90.1,
+        29.92,
+        -89.9,
+        30.08
+      ]
+    },
+    {
+      "id": "naip-new-platte",
+      "terrain_group": "river",
+      "bbox": [
+        -100.6,
+        41.02,
+        -100.4,
+        41.18
+      ]
+    },
+    {
+      "id": "naip-new-rio-grande",
+      "terrain_group": "river",
+      "bbox": [
+        -106.7,
+        32.02,
+        -106.5,
+        32.18
+      ]
+    },
+    {
+      "id": "naip-new-susquehanna",
+      "terrain_group": "river",
+      "bbox": [
+        -77.0,
+        40.22,
+        -76.8,
+        40.38
+      ]
+    },
+    {
+      "id": "naip-new-columbia-east",
+      "terrain_group": "river",
+      "bbox": [
+        -119.4,
+        46.52,
+        -119.2,
+        46.68
+      ]
+    },
+    {
+      "id": "naip-new-snake",
+      "terrain_group": "river",
+      "bbox": [
+        -114.6,
+        42.52,
+        -114.4,
+        42.68
+      ]
+    },
+    {
+      "id": "naip-new-sacramento-north",
+      "terrain_group": "river",
+      "bbox": [
+        -122.2,
+        39.42,
+        -122.0,
+        39.58
+      ]
+    },
+    {
+      "id": "naip-new-cape-cod",
+      "terrain_group": "coast",
+      "bbox": [
+        -70.3,
+        41.72,
+        -70.1,
+        41.88
+      ]
+    },
+    {
+      "id": "naip-new-chesapeake",
+      "terrain_group": "coast",
+      "bbox": [
+        -76.4,
+        37.22,
+        -76.2,
+        37.38
+      ]
+    },
+    {
+      "id": "naip-new-charleston",
+      "terrain_group": "coast",
+      "bbox": [
+        -80.0,
+        32.62,
+        -79.8,
+        32.78
+      ]
+    },
+    {
+      "id": "naip-new-georgia",
+      "terrain_group": "coast",
+      "bbox": [
+        -81.4,
+        31.32,
+        -81.2,
+        31.48
+      ]
+    },
+    {
+      "id": "naip-new-galveston",
+      "terrain_group": "coast",
+      "bbox": [
+        -94.9,
+        29.22,
+        -94.7,
+        29.38
+      ]
+    },
+    {
+      "id": "naip-new-san-diego",
+      "terrain_group": "coast",
+      "bbox": [
+        -117.3,
+        32.72,
+        -117.1,
+        32.88
+      ]
+    },
+    {
+      "id": "naip-new-washington-coast",
+      "terrain_group": "coast",
+      "bbox": [
+        -124.25,
+        46.82,
+        -124.05,
+        46.98
+      ]
+    },
+    {
+      "id": "naip-new-morro-bay",
+      "terrain_group": "coast",
+      "bbox": [
+        -120.9,
+        35.27,
+        -120.7,
+        35.43
+      ]
+    },
+    {
+      "id": "naip-new-white-sands",
+      "terrain_group": "dryland",
+      "bbox": [
+        -106.3,
+        32.82,
+        -106.1,
+        32.98
+      ]
+    },
+    {
+      "id": "naip-new-death-valley",
+      "terrain_group": "dryland",
+      "bbox": [
+        -116.8,
+        36.42,
+        -116.6,
+        36.58
+      ]
+    },
+    {
+      "id": "naip-new-mojave",
+      "terrain_group": "dryland",
+      "bbox": [
+        -115.9,
+        35.02,
+        -115.7,
+        35.18
+      ]
+    },
+    {
+      "id": "naip-new-petrified",
+      "terrain_group": "dryland",
+      "bbox": [
+        -109.9,
+        34.92,
+        -109.7,
+        35.08
+      ]
+    },
+    {
+      "id": "naip-new-badlands",
+      "terrain_group": "dryland",
+      "bbox": [
+        -102.4,
+        43.72,
+        -102.2,
+        43.88
+      ]
+    },
+    {
+      "id": "naip-new-big-bend",
+      "terrain_group": "dryland",
+      "bbox": [
+        -103.3,
+        29.22,
+        -103.1,
+        29.38
+      ]
+    },
+    {
+      "id": "naip-new-great-salt-desert",
+      "terrain_group": "dryland",
+      "bbox": [
+        -113.3,
+        40.72,
+        -113.1,
+        40.88
+      ]
+    },
+    {
+      "id": "naip-new-soda-lake",
+      "terrain_group": "dryland",
+      "bbox": [
+        -119.0,
+        39.42,
+        -118.8,
+        39.58
+      ]
+    }
+  ]
+}

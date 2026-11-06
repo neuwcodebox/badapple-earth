@@ -1,0 +1,198 @@
+{
+  "requester_pays": false,
+  "widths": [
+    256,
+    512,
+    1024,
+    2048
+  ],
+  "scale_weights": [
+    20,
+    30,
+    35,
+    15
+  ],
+  "aspect_ratio": [
+    1444,
+    1080
+  ],
+  "preview_width": 256,
+  "max_cloud_ratio": 0.02,
+  "stride_fraction": 0.5,
+  "block_size": 2048,
+  "seed": 67,
+  "report_samples": 200,
+  "collect_rotations": true,
+  "cache_rgb": true,
+  "max_memory_mb": 3072,
+  "max_disk_mb": 18000,
+  "min_free_disk_mb": 30720,
+  "max_block_attempts": 3,
+  "max_blocks_per_scene": 32,
+  "source": "beeldmateriaal-ortho",
+  "datetime": "2015-01-01/2023-12-31",
+  "scenes_per_aoi": 8,
+  "catalog_limit_per_aoi": 40,
+  "areas": [
+    {
+      "id": "nl-amsterdam",
+      "terrain_group": "urban",
+      "bbox": [
+        4.79,
+        52.305,
+        5.010000000000001,
+        52.434999999999995
+      ]
+    },
+    {
+      "id": "nl-rotterdam",
+      "terrain_group": "urban",
+      "bbox": [
+        4.37,
+        51.855000000000004,
+        4.590000000000001,
+        51.985
+      ]
+    },
+    {
+      "id": "nl-utrecht",
+      "terrain_group": "urban",
+      "bbox": [
+        5.01,
+        52.025000000000006,
+        5.23,
+        52.155
+      ]
+    },
+    {
+      "id": "nl-eindhoven",
+      "terrain_group": "urban",
+      "bbox": [
+        5.359999999999999,
+        51.375,
+        5.58,
+        51.504999999999995
+      ]
+    },
+    {
+      "id": "nl-flevoland",
+      "terrain_group": "polder",
+      "bbox": [
+        5.54,
+        52.485,
+        5.760000000000001,
+        52.614999999999995
+      ]
+    },
+    {
+      "id": "nl-noordoostpolder",
+      "terrain_group": "polder",
+      "bbox": [
+        5.6899999999999995,
+        52.665,
+        5.91,
+        52.794999999999995
+      ]
+    },
+    {
+      "id": "nl-zeeland",
+      "terrain_group": "water",
+      "bbox": [
+        3.64,
+        51.435,
+        3.86,
+        51.565
+      ]
+    },
+    {
+      "id": "nl-biesbosch",
+      "terrain_group": "water",
+      "bbox": [
+        4.64,
+        51.685,
+        4.86,
+        51.815
+      ]
+    },
+    {
+      "id": "nl-wadden",
+      "terrain_group": "water",
+      "bbox": [
+        5.89,
+        53.235,
+        6.11,
+        53.364999999999995
+      ]
+    },
+    {
+      "id": "nl-friesland",
+      "terrain_group": "polder",
+      "bbox": [
+        5.59,
+        52.985,
+        5.8100000000000005,
+        53.114999999999995
+      ]
+    },
+    {
+      "id": "nl-veluwe",
+      "terrain_group": "forest",
+      "bbox": [
+        5.739999999999999,
+        52.085,
+        5.96,
+        52.214999999999996
+      ]
+    },
+    {
+      "id": "nl-limburg",
+      "terrain_group": "agriculture",
+      "bbox": [
+        5.77,
+        50.835,
+        5.99,
+        50.964999999999996
+      ]
+    },
+    {
+      "id": "nl-groningen",
+      "terrain_group": "agriculture",
+      "bbox": [
+        6.54,
+        53.115,
+        6.760000000000001,
+        53.245
+      ]
+    },
+    {
+      "id": "nl-overijssel",
+      "terrain_group": "agriculture",
+      "bbox": [
+        6.29,
+        52.435,
+        6.510000000000001,
+        52.565
+      ]
+    },
+    {
+      "id": "nl-drenthe",
+      "terrain_group": "forest",
+      "bbox": [
+        6.489999999999999,
+        52.835,
+        6.71,
+        52.964999999999996
+      ]
+    },
+    {
+      "id": "nl-brabant",
+      "terrain_group": "agriculture",
+      "bbox": [
+        5.09,
+        51.485,
+        5.3100000000000005,
+        51.614999999999995
+      ]
+    }
+  ]
+}

@@ -41,7 +41,8 @@ def validate_config(config: dict):
             raise ValueError("Aerial catalogue limit must be between scenes_per_aoi and 100")
         if not config.get("cache_rgb"):
             raise ValueError("Aerial collection requires reusable RGB caching")
-        validate_sample_config({**config, "scene_attempts_per_aoi": min(3, config["scenes_per_aoi"])}, 1)
+        validate_sample_config({**config, "scene_attempts_per_aoi": min(3, config["scenes_per_aoi"])}, 1,
+                               max_window_size=4096)
     else:
         validate_sample_config({**config, "scene_attempts_per_aoi": config["scenes_per_aoi"]}, 1)
     for name, low, high in [("block_size", 256, 4096), ("report_samples", 1, 200),
@@ -229,6 +230,13 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
             "source_item_id": scene.get("source_item_id", scene["item_id"]),
             "source_asset_href": scene["visual"],
             "source_license": scene.get("license"),
+            "acquisition_precision": scene.get("acquisition_precision", "interval" if scene.get("acquired_end") else "instant"),
+            "source_catalog_datetime": scene.get("catalog_datetime"),
+            "source_catalog_url": scene.get("catalog_item_url"),
+            "source_license_refs": scene.get("license_refs", []),
+            "source_rights_notes": scene.get("rights_notes"),
+            "source_file_sha256": scene.get("file_sha256"),
+            "source_file_mtime": scene.get("file_mtime"),
             "source_licensors": [p["name"] for p in scene.get("providers", []) if "licensor" in p.get("roles", [])],
             "aoi_id": area["id"], "terrain_group": area["terrain_group"], "window": window,
             "longitude": location["longitude"], "latitude": location["latitude"],

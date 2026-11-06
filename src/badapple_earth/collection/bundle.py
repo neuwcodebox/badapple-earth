@@ -36,7 +36,8 @@ def extend_disjoint(indexes: list[Path], output: Path):
             source = config.get("source")
             if source is None and config.get("collection") == "sentinel-2-c1-l2a":
                 source = "earthsearch-sentinel2-c1"
-            if source not in {"earthsearch-sentinel2-c1", "planetarycomputer-naip", "linz-imagery"}:
+            from ..sources.aerial import SOURCES
+            if source not in {"earthsearch-sentinel2-c1", *SOURCES}:
                 raise ValueError("Cannot prove disjoint source namespaces")
             current_sources.add(source)
         if namespaces & current_sources:

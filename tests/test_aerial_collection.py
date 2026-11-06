@@ -95,13 +95,16 @@ def test_mixed_source_credits_identify_actual_licensors_and_transformations():
     assert len(references) == 3
 
 
-def test_aerial_collection_resumes_and_replays_cached_rgb_without_network(tmp_path, monkeypatch):
+@pytest.mark.parametrize("source", [aerial.LINZ, aerial.SWISS, aerial.NETHERLANDS])
+def test_aerial_collection_resumes_and_replays_cached_rgb_without_network(tmp_path, monkeypatch, source):
     from badapple_earth.collection import pipeline
     from badapple_earth.matching.photos import PhotoCache
-    settings = {**config(), "source": aerial.LINZ, "cache_rgb": True, "collect_rotations": True,
+    settings = {**config(), "source": source, "cache_rgb": True, "collect_rotations": True,
                 "catalog_limit_per_aoi": 2}
     settings["areas"].append({"id": "missing", "terrain_group": "test", "bbox": [2, 0, 3, 1]})
-    candidate = {**scene(), "source_id": aerial.LINZ, "asset_key": "visual",
+    candidate = {**scene(), "source_id": source, "asset_key": "visual",
+                 "acquisition_precision": "nominal_tile_year", "catalog_datetime": "2023-01-01T00:00:00Z",
+                 "rights_notes": "source notices", "file_sha256": "a" * 64,
                  "acquired_start": "2023-01-01T00:00:00Z", "acquired_end": "2023-01-03T00:00:00Z"}
     class AerialScene(Scene):
         def dataset_mask(self, out_shape):
@@ -125,6 +128,8 @@ def test_aerial_collection_resumes_and_replays_cached_rgb_without_network(tmp_pa
     rows = [row for s in manifest["shards"] for row in pq.read_table(tmp_path / "shards" / s["shard_id"] / "tiles.parquet").to_pylist()]
     assert all(r["cloud_quality"] == "unassessed" and r["local_cloud_ratio"] is None for r in rows)
     assert all(r["acquired_end"] == candidate["acquired_end"] for r in rows)
+    assert all(r["acquisition_precision"] == "nominal_tile_year" and r["source_rights_notes"] == "source notices"
+               and r["source_file_sha256"] == "a" * 64 for r in rows)
     monkeypatch.setattr(pipeline, "catalog", lambda *args: pytest.fail("completed collection must not query catalogue"))
     assert pipeline.collect(settings, tmp_path, 100)["rows"] == 100
     monkeypatch.setattr(aerial, "AerialReader", lambda *args: pytest.fail("cached photos must not fetch source"))

@@ -16,18 +16,18 @@ from .imagery import EXTRACTION_VERSION, SceneReader, candidate_windows, stable_
 from .sources.sentinel import discover, safe_asset
 
 
-def validate_config(config: dict, limit: int):
+def validate_config(config: dict, limit: int, *, max_window_size=2048):
     if type(limit) is not int or not 1 <= limit <= 500:
         raise ValueError("P1 sample limit must be between 1 and 500")
     if config.get("requester_pays") is not False:
         raise ValueError("P1 requires requester_pays=false")
     widths, aspect = config["widths"], config["aspect_ratio"]
-    if not widths or any(type(w) is not int or not 16 <= w <= 2048 for w in widths):
-        raise ValueError("P1 widths must be integers between 16 and 2048")
+    if not widths or any(type(w) is not int or not 16 <= w <= max_window_size for w in widths):
+        raise ValueError(f"Source widths must be integers between 16 and {max_window_size}")
     if len(aspect) != 2 or any(type(v) is not int or v <= 0 for v in aspect):
         raise ValueError("aspect_ratio must contain two positive integers")
-    if any(not 1 <= round(w * aspect[1] / aspect[0]) <= 2048 for w in widths):
-        raise ValueError("P1 source window height must be between 1 and 2048")
+    if any(not 1 <= round(w * aspect[1] / aspect[0]) <= max_window_size for w in widths):
+        raise ValueError(f"Source window height must be between 1 and {max_window_size}")
     if not 16 <= config["preview_width"] <= 1024 or not 0 <= config["max_cloud_ratio"] <= 1:
         raise ValueError("Invalid preview width or cloud threshold")
     if not 1 <= round(config["preview_width"] * aspect[1] / aspect[0]) <= 1024:

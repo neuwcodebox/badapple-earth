@@ -125,7 +125,11 @@ NAIP와 LINZ에는 Sentinel-2 SCL이 없으므로 이를 합성하거나 구름 
 
 #### 2.4 후순위 소스와 공통 규칙
 
-추가 도입 후보는 네덜란드 Beeldmateriaal과 스위스 SWISSIMAGE다. 2026-11-06 조사에서 양쪽의 실제 RGB 창을 읽었지만 adapter는 미구현이다. 네덜란드는 EPSG:28992 다운로드 색인·타일형 TIFF, 스위스는 STAC·RGB COG를 사용한다. 촬영 연도와 정확한 촬영일을 구분하는 메타데이터 정확도, 소스별 이용 조건·혼합 출처 고지를 보존한 뒤 수집기에 연결한다. 스페인 PNOA·프랑스 BD ORTHO는 공식 문서 확인 단계다. 접근 증거·연결 조건·우선순위는 [추가 데이터원 조사](history/2026-11-06-P5-data-source-research.md)에 둔다.
+네덜란드 `beeldmateriaal-ortho`와 스위스 `swisstopo-swissimage`는 `sources/europe.py`의 발견·정규화와 기존 항공사진 reader를 사용한다. 전자는 공식 2025 RGB 25cm 다운로드 색인의 EPSG:28992 geometry를 경위도로 변환해 AOI와 교차하고, 후자는 `ch.swisstopo.swissimage-dop10` STAC의 10cm RGB COG를 선택한다. 네덜란드 표본은 overview 없는 타일형 TIFF이므로 COG라고 표시하지 않는다. 조사와 실제 대량 수집 상태는 각각 [데이터원 조사](history/2026-11-06-P5-data-source-research.md)·[30만 확대 기록](history/2026-11-06-P5-expansion-300k.md)에 둔다. 스페인 PNOA·프랑스 BD ORTHO는 공식 문서 확인 단계다.
+
+`acquisition_precision`은 단일 시점 `instant`, 구간 `interval`, 스위스 대표 연도 `nominal_tile_year`, 네덜란드 제품 연도 `product_year`를 구분한다. 연도 자료의 `acquired_at`에는 `YYYY`를 저장하며 원래 카탈로그 timestamp·파일 mtime·SHA-256·라이선스 링크·권리 고지를 별도 필드로 보존한다. 네덜란드 mtime은 촬영일이 아니고 스위스 `YYYY-01-01`도 정확한 1월 1일 촬영이 아니다. 스위스 대표 연도는 타일 70% 이상을 차지하는 영상의 연도다. 스위스 OGD 출처 고지와 큰 호수 중심의 Planet 자료 가능성을 기록하고 CC-BY로 바꾸지 않는다. 새 소스가 선택되면 소스별 크레딧과 연도 정확도를 표시한다.
+
+항공사진의 원본 창은 최대 4096px까지 허용해 초고해상도 도시 사진에서도 지상 범위를 넓힌다. Sentinel-2와 P1의 2048px 한도는 유지하며 실제 블록+halo가 메모리 예산을 넘으면 기존 자원 검사로 중단한다. 새 설정은 도시 LINZ·스위스의 폭 512/1024/2048/4096px, NAIP·네덜란드의 폭 256/512/1024/2048px를 사용한다. 서로 다른 해상도의 동일 지역이나 회전 view를 독립 장소 증가로 과장하지 않는다.
 
 Landsat Collection 2는 넓은 지형 패턴을 위한 후순위 후보이며, OpenAerialMap은 영상별 이용 조건·품질 검토가 필요하다. 첫 구현에 추가하지 않는다. 상용 지도 서비스 화면 캡처와 타일 스크래핑은 제외한다.
 

@@ -377,6 +377,10 @@ def prepare(root: Path, config):
 
 
 def frame_credit(row):
+    if row.get("source_id") == "beeldmateriaal-ortho":
+        return "Beeldmateriaal Nederland / beeldmateriaal.nl / CC BY 4.0"
+    if row.get("source_id") == "swisstopo-swissimage":
+        return "©swisstopo / SWISSIMAGE / see product source notices"
     if row.get("source_id") == "planetarycomputer-naip":
         return "NAIP / USDA / Microsoft Planetary Computer"
     if row.get("source_id") == "linz-imagery":

@@ -101,6 +101,13 @@ def source_credits(selected):
             licensors = ", ".join(row.get("source_licensors") or ["see source collection providers"])
             credits.add(f"LINZ imagery: {licensors}; CC BY 4.0; cropped/resized/rotated; collection {row['collection_id']}")
             references.add("https://registry.opendata.aws/nz-imagery/")
+        elif source == "beeldmateriaal-ortho":
+            credits.add("Beeldmateriaal Nederland / beeldmateriaal.nl; CC BY 4.0; cropped/resized/rotated")
+            references.add("https://www.beeldmateriaal.nl/dataroom")
+        elif source == "swisstopo-swissimage":
+            credits.add("©swisstopo; SWISSIMAGE; cropped/resized/rotated. Product lake centres may include "
+                        "material © (2016-2018) Planet. All rights reserved.")
+            references.add("https://www.swisstopo.admin.ch/fr/orthophotos-swissimage-10-cm")
         else:
             credits.add(f"Contains modified Copernicus Sentinel data {row['acquired_at'][:4]}")
             references.add("https://registry.opendata.aws/sentinel-2-l2a-cogs/")

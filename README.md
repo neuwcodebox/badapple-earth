@@ -255,6 +255,17 @@ uv run badapple-earth combine --index data/index/p5-1m --index data/index/p5-nai
 
 현재 실행 상태·자원·비교 여부는 [PLAN](docs/PLAN.md), 실제 경위는 [수집 기록](docs/history/2026-11-03-P5-aerial-collection.md)에 둔다. 새 인덱스를 기존 전곡이나 Astra 선택에 자동 적용하지 않는다.
 
+### 추가 항공사진 30만 후보 수집
+
+기존 120만 후보를 보존하고 NAIP·LINZ 각 10만, 네덜란드·스위스 각 5만을 별도 인덱스에 더한다. `config/collect-expand-{naip,linz,netherlands,swiss}.json`이 고정한 새 AOI·촬영 사업·지상 스케일을 사용한다. 두 소스씩 각각 두 작업으로 실행하며 공유 디스크 여유 하한 30GiB를 지킨다. 실제 진행은 [PLAN](docs/PLAN.md), 네 소스의 실행·재개·결합은 [확대 기록](docs/history/2026-11-06-P5-expansion-300k.md)에 둔다.
+
+```powershell
+uv run badapple-earth collect-parallel --config config/collect-expand-netherlands.json --output data/index/p5-expand-netherlands-50k --limit 50000 --workers 2
+uv run badapple-earth collect-parallel --config config/collect-expand-swiss.json --output data/index/p5-expand-swiss-50k --limit 50000 --workers 2
+```
+
+네덜란드는 공식 2025년 RGB 색인과 공개 타일형 TIFF, 스위스는 공개 STAC의 RGB COG를 사용한다. 촬영 정보가 제품/대표 연도이면 정확도를 저장하고 화면에도 연도로 표시한다. 네덜란드의 파일 수정 시점·스위스 카탈로그의 1월 1일을 실제 촬영일로 해석하지 않는다. 구름 품질은 미평가이며 사진의 원래 RGB와 출처·창·변환을 보존한다. 같은 출력 폴더의 수집이 이미 실행 중이면 중복 시작하지 않는다.
+
 ### 7. 선택 실험: 30° 회전·작은 크롭
 
 고정된 기존 장소의 로컬 RGB를 재사용한다. `views-index`와 `compare-views`는 서로 다른 터미널에서 병행할 수 있다. 검색은 인덱서가 완료한 그룹만 읽고, 두 명령 모두 체크포인트부터 재개한다.

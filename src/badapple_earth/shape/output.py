@@ -15,7 +15,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ..evidence import checksum, contact_sheet, write_json
-from ..matching.output import render
+from ..matching.output import render, source_credits
 from ..matching.views import view_metadata
 from .features import structures
 from .geometry import score, sdf, target, tone
@@ -169,10 +169,11 @@ def materialize(target_root: Path, index_root: Path, run_root: Path, baseline: P
     contact_sheet(overview, run_root / "top5.jpg", columns=6)
     contact_sheet(diagnostic_overview, run_root / "diagnostics.jpg", columns=6)
     (run_root / "report.html").write_text('<!doctype html><meta charset="utf-8"><title>Shape matching</title><style>body{background:#202020;color:white;font:14px sans-serif}td{padding:5px}img{width:192px;height:auto}th{position:sticky;top:0;background:#202020}</style><h1>Shape-first real photo matching</h1><p>Masks and SDF are analysis diagnostics; output uses the original color photo. Green SDF pixels indicate agreement, red/blue indicate signed differences.</p><table><tr><th>Scores</th><th>Target</th><th>Photo</th><th>Target mask</th><th>Photo mask</th><th>SDF difference</th></tr>' + ''.join(report_rows) + '</table>', encoding="utf-8")
+    credits, references = source_credits(selected)
     manifest.update({"materialized": len(selected), "materialization_failures": [],
                      "selected_unique_tiles": len({r["tile_id"] for r in selected}),
                      "selected_unique_views": len({r["view_id"] for r in selected}),
-                     "credits": sorted({f"Contains modified Copernicus Sentinel data {str(r['acquired_at'])[:4]}" for r in selected})})
+                     "credits": credits, "source_references": references})
     write_json(run_root / "manifest.json", manifest)
     manifest = render(target_root, run_root)
     manifest["outputs"].extend(["diagnostics.jpg", "report.html"])

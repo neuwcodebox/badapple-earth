@@ -1,4 +1,4 @@
-"""Bounded anonymous NAIP and LINZ discovery, with unsigned persisted locators."""
+"""Bounded anonymous aerial discovery, with unsigned persisted locators."""
 
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
@@ -18,7 +18,9 @@ from ..imagery import GDAL_OPTIONS
 
 NAIP = "planetarycomputer-naip"
 LINZ = "linz-imagery"
-SOURCES = (NAIP, LINZ)
+SWISS = "swisstopo-swissimage"
+NETHERLANDS = "beeldmateriaal-ortho"
+SOURCES = (NAIP, LINZ, SWISS, NETHERLANDS)
 PC = "https://planetarycomputer.microsoft.com/api/stac/v1"
 LINZ_ROOT = "https://nz-imagery.s3.ap-southeast-2.amazonaws.com/"
 QUALITY_POLICY = "aerial-rgb-dataset-mask-unassessed-cloud-v1"
@@ -28,13 +30,21 @@ _TOKENS = {}
 def safe_asset(href, source):
     parsed = urlsplit(href)
     allowed = {NAIP: {"naipeuwest.blob.core.windows.net"},
-               LINZ: {"nz-imagery.s3.ap-southeast-2.amazonaws.com", "nz-imagery.s3-ap-southeast-2.amazonaws.com"}}
+               LINZ: {"nz-imagery.s3.ap-southeast-2.amazonaws.com", "nz-imagery.s3-ap-southeast-2.amazonaws.com"},
+               SWISS: {"data.geo.admin.ch"},
+               NETHERLANDS: {"fsn1.your-objectstorage.com", "hwh-ortho.fsn1.your-objectstorage.com", "basisdata.nl"}}
     if (source not in allowed or parsed.scheme != "https" or parsed.hostname not in allowed[source]
             or parsed.username or parsed.password or parsed.port or parsed.query or parsed.fragment
             or not parsed.path.lower().endswith((".tif", ".tiff"))):
-        raise ValueError("Unsupported aerial asset; require an unsigned approved HTTPS COG")
+        raise ValueError("Unsupported aerial asset; require an unsigned approved HTTPS GeoTIFF")
     if source == NAIP and not parsed.path.startswith("/naip/"):
         raise ValueError("NAIP container required")
+    if source == SWISS and not parsed.path.startswith("/ch.swisstopo.swissimage-dop10/"):
+        raise ValueError("SWISSIMAGE path required")
+    if source == NETHERLANDS and not (parsed.path.startswith("/hwh-ortho/")
+                                      or (parsed.hostname == "hwh-ortho.fsn1.your-objectstorage.com"
+                                          and parsed.path.startswith("/2025/"))):
+        raise ValueError("Beeldmateriaal orthophoto path required")
     return href
 
 
@@ -105,6 +115,9 @@ def normalize(item, source, collection, item_url=None, collection_doc=None):
 
 def discover(config, area, cache):
     source, limit = config["source"], config["catalog_limit_per_aoi"]
+    if source in (SWISS, NETHERLANDS):
+        from .europe import discover as discover_europe
+        return discover_europe(config, area, cache)
     excluded, selected = [], []
     if source == NAIP:
         collection = cached_json(cache, PC + "/collections/naip")

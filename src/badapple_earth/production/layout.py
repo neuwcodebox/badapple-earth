@@ -118,5 +118,8 @@ def frame(plan, config):
 def location_caption(row):
     lat, lon = row["latitude"], row["longitude"]
     dates = list(dict.fromkeys(value[:10] for value in row["acquired_at"].split("/")))
+    precision = row.get("acquisition_precision")
+    if precision in ("nominal_tile_year", "product_year"):
+        dates = [row["acquired_at"][:4] + (" (representative year)" if precision == "nominal_tile_year" else " (product year)")]
     return (f"{abs(lat):.4f}° {'N' if lat >= 0 else 'S'}, {abs(lon):.4f}° {'E' if lon >= 0 else 'W'}"
             f"   ·   {' – '.join(dates)}")
