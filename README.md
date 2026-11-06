@@ -257,7 +257,7 @@ uv run badapple-earth combine --index data/index/p5-1m --index data/index/p5-nai
 
 ### 추가 항공사진 30만 후보 수집
 
-기존 120만 후보를 보존하고 NAIP·LINZ 각 10만, 네덜란드·스위스 각 5만을 별도 인덱스에 더한다. `config/collect-expand-{naip,linz,netherlands,swiss}.json`이 고정한 새 AOI·촬영 사업·지상 스케일을 사용한다. 두 소스씩 각각 두 작업으로 실행하며 공유 디스크 여유 하한 30GiB를 지킨다. 실제 진행은 [PLAN](docs/PLAN.md), 네 소스의 실행·재개·결합은 [확대 기록](docs/history/2026-11-06-P5-expansion-300k.md)에 둔다.
+기존 120만 후보를 보존하고 NAIP·LINZ 각 10만, 네덜란드·스위스 각 5만을 별도 인덱스에 더한다. `config/collect-expand-{naip,linz,netherlands,swiss}.json`이 고정한 새 AOI·촬영 사업·지상 스케일을 사용한다. 두 소스씩 각각 두 작업으로 실행하며 공유 디스크 여유 하한 30GiB를 지킨다. 완료 후 `combine --keep-duplicates`로 저장된 참조·수량만 합한다. 별도 인덱스 사이의 중복 사진을 허용하며 수집 중 유사 사진 비교도 하지 않는다. 실제 진행은 [PLAN](docs/PLAN.md), 네 소스의 실행·재개·결합은 [확대 기록](docs/history/2026-11-06-P5-expansion-300k.md)에 둔다.
 
 ```powershell
 uv run badapple-earth collect-parallel --config config/collect-expand-netherlands.json --output data/index/p5-expand-netherlands-50k --limit 50000 --workers 2

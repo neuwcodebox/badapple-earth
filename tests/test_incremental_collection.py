@@ -6,7 +6,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from badapple_earth.collection.bundle import combine, extend_disjoint, members, read_manifest
+from badapple_earth.collection.bundle import combine, concatenate, extend_disjoint, members, read_manifest
 from badapple_earth.production.grid.incremental import merge_topk
 
 
@@ -109,6 +109,26 @@ def test_disjoint_extension_matches_full_deduplication_without_reading_baseline_
     assert actual["index_id"] == expected["index_id"] and actual["rows"] == 2
     with pytest.raises(ValueError,match="Overlapping source"):
         extend_disjoint([roots[0],roots[0]],tmp_path/"invalid")
+
+
+def test_reference_concatenation_keeps_duplicate_tiles_without_opening_any_tile_tables(tmp_path, monkeypatch):
+    roots = []
+    for name in ("old", "new"):
+        root = tmp_path / name
+        shard = publish(root, 1)  # The tile ID deliberately occurs in both indexes.
+        manifest = {"index_id": name, "rows": 1, "shards": [shard], "feature_version": "test",
+                    "canonical_size": [32, 24], "coarse_shape": [12, 16],
+                    "areas": {"same-area": 1}, "terrain_groups": {"urban": 1}, "scales": {"256": 1}}
+        (root / "manifest.json").write_text(json.dumps(manifest))
+        roots.append(root)
+    monkeypatch.setattr(pq, "read_table", lambda *a, **k: pytest.fail("Must not scan tile metadata"))
+    monkeypatch.setattr(pq, "ParquetFile", lambda *a, **k: pytest.fail("Must not open tile metadata"))
+    result = concatenate(roots, tmp_path / "joined")
+    assert result["rows"] == 2 and len(result["members"]) == 2
+    assert result["areas"] == {"same-area": 2}
+    assert result["tile_deduplication"] == "not_performed"
+    assert not any(record["exclude_tile_ids"] for record in result["members"])
+    assert len(members(tmp_path / "joined", result)) == 2
 
 
 def test_selected_native_cache_is_reused_without_opening_a_source(tmp_path):

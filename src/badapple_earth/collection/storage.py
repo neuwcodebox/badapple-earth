@@ -162,20 +162,6 @@ class Index:
             # Account for the deletion at the next resource check.
             self.last_disk_scan = -float("inf")
 
-    def near_duplicate(self, scene_id, window, dhash, coarse):
-        left, top, width, height = window
-        rows = self.db.execute(
-            "SELECT tile_id,left_px,top_px,height,dhash,coarse FROM tiles "
-            "WHERE scene_id=? AND width=? AND left_px BETWEEN ? AND ? AND top_px BETWEEN ? AND ? LIMIT 32",
-            (scene_id, width, left - width // 2, left + width // 2, top - height // 2, top + height // 2))
-        for row in rows:
-            if (int(dhash, 16) ^ int(row["dhash"], 16)).bit_count() > 2:
-                continue
-            previous = np.frombuffer(row["coarse"], dtype=np.uint8).astype(np.float32)
-            if float(np.mean((coarse.reshape(-1).astype(np.float32) - previous) ** 2)) <= 4:
-                return row["tile_id"]
-        return None
-
     def commit(self, plan, cursor, done, records, coarse, fine, rejected, images, rotations=None, photos=None):
         shard_id = identity([plan["job_id"], cursor, [r["tile_id"] for r in records], rejected])
         stage = self.root / "staging" / (shard_id + "-" + uuid.uuid4().hex)

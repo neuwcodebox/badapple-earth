@@ -15,6 +15,47 @@ def read_manifest(root: Path):
     return json.loads((root / "manifest.json").read_text(encoding="utf-8"))
 
 
+def concatenate(indexes: list[Path], output: Path):
+    """Join references and saved counts; allow duplicate tiles across members."""
+    if not indexes:
+        raise ValueError("At least one index is required")
+    manifests = [read_manifest(root) for root in indexes]
+    records, seen_members = [], set()
+    totals = {key: Counter() for key in ("areas", "terrain_groups", "scales")}
+    first = manifests[0]
+    for root, manifest in zip(indexes, manifests):
+        for key in ("feature_version", "canonical_size", "coarse_shape"):
+            if manifest[key] != first[key]:
+                raise ValueError(f"Index members disagree on {key}")
+        for directory, member, excluded in members(root, manifest):
+            if directory.resolve() == output.resolve():
+                raise ValueError("Bundle output must not replace a source index")
+            if member["index_id"] in seen_members:
+                raise ValueError("The same index member was supplied more than once")
+            seen_members.add(member["index_id"])
+            record = {"path": Path(os.path.relpath(directory.resolve(), output.resolve())).as_posix(),
+                      "index_id": member["index_id"], "rows": member["rows"],
+                      "shard_ids": [s["shard_id"] for s in member["shards"]],
+                      "exclude_tile_ids": sorted(excluded)}
+            if "snapshot_source_index_id" in member:
+                record["snapshot_manifest"] = member
+            records.append(record)
+        for key, counter in totals.items():
+            counter.update(manifest.get(key, {}))
+    result = {"schema": "index-bundle-v1", "index_id": identity([
+                  {k: v for k, v in record.items() if k != "path"} for record in records]),
+              "members": records, "rows": sum(m["rows"] for m in manifests),
+              **{key: first[key] for key in ("feature_version", "canonical_size", "coarse_shape")},
+              **{key: dict(counter) for key, counter in totals.items()},
+              "tile_deduplication": "not_performed",
+              "duplicate_tile_ids_excluded": sum(len(r["exclude_tile_ids"]) for r in records)}
+    if (output / "manifest.json").exists() and read_manifest(output).get("schema") != "index-bundle-v1":
+        raise ValueError("Bundle output must not replace a source index")
+    output.mkdir(parents=True, exist_ok=True)
+    write_json(output / "manifest.json", result)
+    return result
+
+
 def extend_disjoint(indexes: list[Path], output: Path):
     """Join already deduplicated bundles from different source namespaces.
 

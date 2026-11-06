@@ -127,6 +127,7 @@ def test_aerial_collection_resumes_and_replays_cached_rgb_without_network(tmp_pa
     assert manifest["areas"] == {"test": 100}
     rows = [row for s in manifest["shards"] for row in pq.read_table(tmp_path / "shards" / s["shard_id"] / "tiles.parquet").to_pylist()]
     assert all(r["cloud_quality"] == "unassessed" and r["local_cloud_ratio"] is None for r in rows)
+    assert all(r["near_duplicate_of"] is None for r in rows)
     assert all(r["acquired_end"] == candidate["acquired_end"] for r in rows)
     assert all(r["acquisition_precision"] == "nominal_tile_year" and r["source_rights_notes"] == "source notices"
                and r["source_file_sha256"] == "a" * 64 for r in rows)

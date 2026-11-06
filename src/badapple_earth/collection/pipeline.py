@@ -179,7 +179,6 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
     records, coarse_values, fine_values, rejected, images = [], [], [], [], {}
     photo_images = [] if config.get("collect_rotations", False) or config.get("cache_rgb", False) else None
     crs = CRS.from_user_input(reader.src.crs)
-    row_map = {}
     heap = [-int(row[0], 16) for row in index.db.execute(
         "SELECT sample_key FROM tiles ORDER BY sample_key LIMIT ?", (config["report_samples"],))]
     heapq.heapify(heap)
@@ -202,15 +201,6 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
             continue
         image = canonical_image(rgb[:, sy, sx], tuple(index.manifest["canonical_size"]))
         coarse, fine, dhash = extract(image, config["aspect_ratio"])
-        # Keep valid flat terrain; near duplicates are linked, not silently erased.
-        near = index.near_duplicate(scene["item_id"], window, dhash, coarse)
-        key = (width, dhash)
-        for previous, previous_coarse in row_map.get(key, []):
-            if (abs(previous["window"][0] - window[0]) <= width // 2
-                    and abs(previous["window"][1] - window[1]) <= window[3] // 2
-                    and np.mean((coarse.astype(np.float32) - previous_coarse.astype(np.float32)) ** 2) <= 4):
-                near = previous["tile_id"]
-                break
         location = window_location(reader.src.transform, reader.src.crs, Window(*window))
         unit = crs.axis_info[0].unit_conversion_factor if crs.is_projected else None
         if unit is not None:
@@ -247,7 +237,7 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
             "cloud_quality": "unassessed" if scl is None else "scl",
             "quality_policy": scene_policy(reader),
             "gray_mean": float(coarse.mean()), "gray_std": float(coarse.std()),
-            "uniform": float(coarse.std()) < 2, "dhash": dhash, "near_duplicate_of": near,
+            "uniform": float(coarse.std()) < 2, "dhash": dhash, "near_duplicate_of": None,
             "extraction_version": EXTRACTION_VERSION, "rotation_degrees": 0,
             "sample_key": sample_key, "sample_image": None,
         }
@@ -259,7 +249,6 @@ def process_block(index, reader, scene, area, plan, scale_limits, scene_limit):
         records.append(row)
         if photo_images is not None:
             photo_images.append(image)
-        row_map.setdefault(key, []).append((row, coarse))
         coarse_values.append(coarse)
         fine_values.append(fine)
         counts[width] += 1
