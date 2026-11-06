@@ -37,4 +37,8 @@ uv run python -m badapple_earth.production.silhouette.full --pause
 
 ## 11월 6일 후속 단계 재개
 
-사용자의 “이어서 하자” 지시로 **18:11 KST**에 `uv run --no-sync python -u -m badapple_earth.production.silhouette.full --resume`을 실행했다. 부모의 BLAS·OMP·Numba는 8스레드이며 작업자 내부는 기존 제한대로 1스레드다. 완료한 검색 체크포인트를 재사용했고 `shortlists.parquet`를 저장한 뒤 **18:11:44 KST에 metadata 단계**로 넘어갔다. 로그는 `.local/silhouette-full-20261106.log`다. 초기 남은 시간 추정은 1–2시간, **19:15–20:15 KST**다. 정밀 평가 처리 속도가 나오기 전의 추정이며 최종 영상은 아직 미완료다.
+사용자의 “이어서 하자” 지시로 **18:11 KST**에 `uv run --no-sync python -u -m badapple_earth.production.silhouette.full --resume`을 실행했다. 부모의 BLAS·OMP·Numba는 8스레드이며 작업자 내부는 기존 제한대로 1스레드다. 완료한 검색 체크포인트를 재사용했고 `shortlists.parquet`를 저장한 뒤 **18:11:44 KST에 metadata 단계**로 넘어갔다. 로그는 `.local/silhouette-full-20261106.log`다. 초기 남은 시간 추정은 1–2시간, 19:15–20:15 KST였다.
+
+후보는 **986,845개 고유 view·6,556,484개 프레임/view 쌍**이다. 메타데이터 20개·정밀 점수 1,206개·색 특징 74개 배치를 완료했고 **19:25:33 KST에 assets 단계**로 넘어갔다. 사용자가 5분마다 확인하고 완료 시 알려달라고 요청해 현재 작업 안에서 상태를 추적한다. 별도 예약 자동화는 만들지 않았다.
+
+19:33 확인에서 native 사진 준비가 `TypeError`로 멈춘 것을 발견했다. 원래 사진의 `rotation_crop`이 None인 정상적인 무회전 view가 새 경로에서 그대로 전달됐고, `native_view`가 명시적 crop만 가정해 실패했다. canonical 사진 경로와 동일하게 기본 `rotation_recipe`를 사용하도록 수정했다. 원본 전체 사진을 보존하는 새 회귀 테스트 1개가 통과했다. 기존 검색·점수·선택·완료 native 88개 장면 배치를 보존하고 **19:34에 재개**했다. 완료 예상은 19:50–20:10 KST로 갱신했으며 이는 아직 추정이다. 기존 출처·좌표·변환의 반복 검수나 정상 완료 사진의 재다운로드는 하지 않는다.

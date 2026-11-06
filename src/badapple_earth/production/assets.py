@@ -17,7 +17,7 @@ from ..collection.bundle import members, read_manifest
 from ..evidence import write_json
 from ..imagery import GDAL_OPTIONS
 from ..matching.photos import PhotoCache, read_rgb_rows
-from ..matching.views import rotate_image, render_view
+from ..matching.views import rotate_image, render_view, rotation_recipe
 from ..sources.sentinel import safe_asset
 from .layout import location_caption
 from .rerank import VERSION as RERANK_VERSION, rerank
@@ -39,7 +39,7 @@ def native_view(image, row, canonical_size):
     if degrees:
         image = image.transpose(transpose[degrees])
     cw, ch = canonical_size[::-1] if degrees in (90, 270) else canonical_size
-    crop = row["rotation_crop"]
+    crop = row.get("rotation_crop") or rotation_recipe(canonical_size,degrees)
     box = (crop[0] / cw * image.width, crop[1] / ch * image.height,
            crop[2] / cw * image.width, crop[3] / ch * image.height)
     width = min(1444, max(1, round(box[2] - box[0])))
