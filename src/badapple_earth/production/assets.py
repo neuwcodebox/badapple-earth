@@ -177,12 +177,18 @@ def astra_choices(root, config, targets, inverse, top):
                      "visual_experiment_id": visual["experiment_id"]}
 
 
-def displayed_candidates(pool, choice, count):
+def displayed_candidates(pool, choice, count, scores=None):
     """Show the winner and up to count real distinct places from this pool."""
     if count < 1:
         raise ValueError("Display count must be positive")
     shown, seen = [choice], {choice["tile_id"]}
-    for row in sorted(pool, key=lambda r: (r["rank"], r["view_id"])):
+    if scores is None:
+        ordered = sorted(pool, key=lambda r: (r["rank"], r["view_id"]))
+    else:
+        if len(scores) != len(pool):
+            raise ValueError("Display scores must cover the candidate pool")
+        ordered = [row for row, _ in sorted(zip(pool, scores), key=lambda pair: (-pair[1], pair[0]["rank"], pair[0]["view_id"]))]
+    for row in ordered:
         if len(shown) >= count:
             break
         if row["tile_id"] not in seen:
