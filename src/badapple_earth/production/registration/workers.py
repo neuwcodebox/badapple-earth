@@ -23,16 +23,17 @@ from .geometry import metadata
 
 
 def initialize(run,shape,config,mode):
-    global TARGETS,CONFIG,CACHE,METRIC
+    global TARGETS,CONFIG,CACHE,METRIC,MODE
     run,shape = Path(run),Path(shape)
     target_directory = (run/"targets").resolve()
     TARGETS = {r["slot"]:str(target_directory/r["frame"])
                for r in pq.read_table(run/"targets/targets.parquet",columns=["slot","frame"]).to_pylist()}
     CONFIG = config
-    cached = Path(config["output"])/"target-pixels.npy"
+    MODE = mode
+    cached = Path(config.get("target_pixel_cache",Path(config["output"])/"target-pixels.npy"))
     if cached.exists():set_target_cache(cached)
     METRIC = json.loads((shape/"manifest.json").read_text(encoding="utf-8"))["config"]
-    CACHE = TargetCache(shape/"target-features") if mode=="fine" else None
+    CACHE = TargetCache(shape/"target-features") if mode in ("fine","track") else None
     cv2.setNumThreads(1)
 
 
@@ -101,7 +102,8 @@ def fine_job(groups):
             for slot,initial in frames:
                 target = CACHE[slot]
                 mask = template(TARGETS[slot],64,48)[0]>.5
-                fitted = refine(gray,TARGETS[slot],np.asarray(initial,np.float64))
+                fitted = refine(gray,TARGETS[slot],np.asarray(initial,np.float64),
+                                prior_weight=CONFIG["tracking_prior_weight"] if MODE=="track" else 0.,local=MODE=="track")
                 seen = set()
                 for parameters in (initial,fitted):
                     view = metadata(row,source_scene,parameters)
@@ -111,5 +113,16 @@ def fine_job(groups):
                     measured = np.asarray(image.convert("L"),np.float32)/255
                     metrics = evaluate(target,photo_features(measured),measured,METRIC)
                     result.append({**{k:v for k,v in view.items() if not k.startswith("_")},**metrics,
-                        "slot":slot,"luminance":luminance_descriptor(image,mask).tolist()})
+                        "slot":slot,"luminance":luminance_descriptor(image,mask).tolist(),
+                        "appearance":np.asarray(image.convert("L").resize((32,24),Image.Resampling.BOX)).ravel().tolist()})
+    return result
+
+
+def appearance_job(groups):
+    result = []
+    for filename,jobs in groups:
+        photos = read_rgb_rows(filename,[offset for offset,_ in jobs])
+        for offset,row in jobs:
+            image = render_view(Image.fromarray(photos[offset]),row,(256,191))
+            result.append({"view_id":row["view_id"],"appearance":np.asarray(image.convert("L").resize((32,24),Image.Resampling.BOX)).ravel().tolist()})
     return result

@@ -27,17 +27,19 @@ def relative_view(previous,current):
     return relative[:2].ravel().tolist()
 
 
-def reuse_native(root,baseline,selected):
+def reuse_native(root,baseline,selected,additional_sources=()):
     root,baseline = Path(root),Path(baseline)
     file = root/"native-reuse.json"
     if file.exists():return
     previous = defaultdict(list)
     seen = set()
-    for row in pq.read_table(baseline/"selected.parquet").to_pylist():
-        if row["view_id"] in seen:continue
-        seen.add(row["view_id"])
-        path = baseline/"assets/selected"/(row["view_id"]+".png")
-        if path.exists():previous[row["tile_id"]].append((row,path))
+    for source_run in (baseline,*map(Path,additional_sources)):
+        for row in pq.read_table(source_run/"selected.parquet").to_pylist():
+            key = str(source_run),row["view_id"]
+            if key in seen:continue
+            seen.add(key)
+            path = source_run/"assets/selected"/(row["view_id"]+".png")
+            if path.exists():previous[row["tile_id"]].append((row,path,source_run))
     destination = root/"assets/selected"
     destination.mkdir(parents=True,exist_ok=True)
     records = []
@@ -50,7 +52,7 @@ def reuse_native(root,baseline,selected):
         done.add(row["view_id"])
         check_pause(root/"pause.request")
         path = destination/(row["view_id"]+".png")
-        for saved,source in previous[row["tile_id"]]:
+        for saved,source,source_run in previous[row["tile_id"]]:
             relative = relative_view(saved,row)
             if relative is None:continue
             if not path.exists():
@@ -63,6 +65,7 @@ def reuse_native(root,baseline,selected):
                         "transform_size":list(SIZE),"view_resampling":"bilinear"}
                 save_image(image_view(load(source),view,size),path)
             records.append({"view_id":row["view_id"],"previous_view_id":saved["view_id"],
+                            "previous_run":str(source_run),
                             "relative_affine":relative,"resampling":"bilinear"})
             break
     write_json(file,{"source_run":str(baseline),"reused_views":len(records),"records":records})

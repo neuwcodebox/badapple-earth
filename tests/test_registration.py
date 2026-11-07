@@ -6,7 +6,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from badapple_earth.production.registration.search import descriptor
-from badapple_earth.production.registration.geometry import coefficients,metadata,SIZE
+from badapple_earth.production.registration.geometry import coefficients,metadata,SIZE,parameters_from_matrix
 from badapple_earth.production.registration.align import coarse_search,refine,warped_gray,set_target_cache,target_image
 from badapple_earth.production.registration.workers import prepare_targets
 from badapple_earth.matching.affine import transform
@@ -14,6 +14,9 @@ from badapple_earth.production.registration.selection import choose,reduce_optio
 from badapple_earth.production.registration.search import retrieve
 from badapple_earth.production.registration.pipeline import fine_groups
 from badapple_earth.production.registration.assets import relative_view,reuse_native
+from badapple_earth.production.registration.motion import estimate,propagation
+from badapple_earth.production.registration.tracking import tracking_groups
+import cv2
 
 
 def test_global_descriptor_preserves_translation_and_rejects_uniform_content():
@@ -181,3 +184,53 @@ def test_native_reuse_only_samples_an_existing_photo_crop_that_covers_the_view(t
     assert json.loads((root/'native-reuse.json').read_text())['reused_views']==1
     narrow={**old,'view_affine':coefficients([.5,.5,.4,0])}
     assert relative_view(narrow,new) is None
+
+
+def test_full_photo_initialization_keeps_its_centre_when_source_guard_is_added():
+    p=parameters_from_matrix([1,0,0,0,1,0])
+    np.testing.assert_allclose(p,[.5,.5,1,0],atol=1e-10)
+
+
+def test_source_similarity_estimation_and_pose_propagation_follow_rotation_and_zoom():
+    previous=np.full((48,64),.9,np.float32)
+    previous[10:35,20:27]=.1;previous[30:36,20:45]=.1
+    previous[10:17,39:47]=.3
+    expected=cv2.getRotationMatrix2D((32,24),3,1.02)
+    expected[:,2]+=[2,1]
+    current=cv2.warpAffine(previous,expected,(64,48),flags=cv2.INTER_LINEAR,borderValue=.9)
+    actual,confidence=estimate(previous,current)
+    scale=np.diag([64,48,1.])
+    points=np.array([[20,20,1],[40,20,1],[32,35,1]])
+    measured=points@(scale@actual@np.linalg.inv(scale)).T
+    predicted=points@np.vstack([expected,[0,0,1]]).T
+    assert confidence>.7
+    np.testing.assert_allclose(measured,predicted,atol=1.)
+    initial=np.array([.5,.5,.5,0.])
+    translated=np.eye(3);translated[0,2]=.05
+    moved=propagation(initial,translated)
+    assert moved[0]<initial[0]
+
+
+def test_motion_compensated_appearance_works_across_different_photo_ids():
+    rng=np.random.default_rng(17)
+    first=rng.integers(0,256,(24,32),dtype=np.uint8)
+    second=np.roll(first,4,axis=1)
+    def row(name,pixels):return dict(view_id=name,tile_id=name,shape_score=.7,luminance=[0.,0.],
+                                    view_affine=[1,0,0,0,1,0],appearance=pixels.ravel().tolist())
+    initial,frozen,moving=row('initial',first),row('other-frozen',first),row('other-moving',second)
+    transforms=np.tile(np.eye(3),(2,1,1));transforms[1,0,2]=4/32
+    selected=choose([[initial],[frozen,moving]],np.stack([first,second]),
+                    dict(continuity_weight=0,motion_weight=0,appearance_weight=1),transforms,np.ones(2))
+    assert selected[1]['view_id']=='other-moving'
+
+
+def test_good_photo_pose_is_propagated_to_neighbor_frames_before_refinement():
+    initial=[.5,.5,.6,0]
+    selected=[dict(slot=i,tile_id=str(i),dense_row=17+i,base_dense_row=17+i,visible=True,
+                   shape_score=.8-.1*i,registration_parameters=initial,view_affine=coefficients(initial)) for i in range(3)]
+    meta={17+i:dict(tile_id=str(i),dense_row=17+i,_rgb_filename='photo.npy',_rgb_offset=i) for i in range(3)}
+    transforms=np.tile(np.eye(3),(3,1,1));transforms[1:,0,2]=.03
+    pixels=np.random.default_rng(9).integers(0,256,(3,24,32),dtype=np.uint8)
+    groups=tracking_groups(selected,meta,transforms,np.zeros(3,np.int32),pixels,dict(tracking_radius=2))
+    moved=[p for _,jobs in groups for _,row,frames in jobs if row['dense_row']==17 for slot,p in frames if slot==1]
+    assert len(moved)==1 and moved[0][0]<initial[0]

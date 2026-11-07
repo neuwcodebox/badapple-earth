@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 from scipy.optimize import least_squares
 
-from .geometry import SIZE,coefficients,maximum_scale,parameters_from_matrix
+from .geometry import SIZE,coefficients,maximum_scale,parameters_from_matrix,image_points
 
 cv2.setNumThreads(1)
 TARGET_PIXELS = None
@@ -110,20 +110,26 @@ def warped_gray(gray,parameters,width=64):
     return cv2.warpAffine(gray,matrix,(width,height),flags=cv2.INTER_LINEAR|cv2.WARP_INVERSE_MAP)
 
 
-def refine(gray,target_path,initial,iterations=24):
+def refine(gray,target_path,initial,iterations=24,prior_weight=0.,local=False):
     target,weights,tx,ty,tn = template(target_path,64,48)
     region_weights = np.sqrt(.4*weights).ravel()
     target_gradient = np.concatenate([tx.ravel(),ty.ravel()])/math.sqrt(max(tn,1e-10))
+    prior = image_points(coefficients(initial)) if prior_weight else None
     def residual(p):
         pixels = warped_gray(gray,p)
         gx = cv2.Sobel(pixels,cv2.CV_32F,1,0,ksize=3)
         gy = cv2.Sobel(pixels,cv2.CV_32F,0,1,ksize=3)
         norm = math.sqrt(max(float(np.sum(gx*gx+gy*gy)),1e-10))
         gradient = np.concatenate([gx.ravel(),gy.ravel()])/norm
-        return np.concatenate([(pixels-target).ravel()*region_weights,
-                               math.sqrt(.6)*(gradient-target_gradient)]).astype(np.float64)
+        parts = [(pixels-target).ravel()*region_weights,math.sqrt(.6)*(gradient-target_gradient)]
+        if prior is not None:parts.append(math.sqrt(prior_weight/6)*(image_points(coefficients(p))-prior).ravel())
+        return np.concatenate(parts).astype(np.float64)
     lower = np.array([0,0,.35,initial[3]-15],np.float64)
     upper = np.array([1,1,1,initial[3]+15],np.float64)
+    if local:
+        limits = np.array([.12,.12,.06,4.])
+        lower = np.maximum(lower,initial-limits)
+        upper = np.minimum(upper,initial+limits)
     start = np.clip(initial,lower+1e-7,upper-1e-7)
     steps = np.array([.005,.005,.003,.15])
     def jacobian(p):

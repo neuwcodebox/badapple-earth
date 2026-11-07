@@ -161,8 +161,12 @@ def select(root,run,baseline,meta,paths,pixels,config,production_id):
     for filename in paths:options.extend(pq.read_table(filename).to_pylist())
     pools = reduce_options(options,baselines,config)
     chosen = choose(pools,pixels,config)
+    write_selection(root,run,baselines,pools,chosen,read_manifest(root/"retrieval")["view_count"])
+
+
+def write_selection(root,run,baselines,pools,chosen,view_count,method="registered-luminance-motion"):
     values,display = {},[]
-    next_address = read_manifest(root/"retrieval")["view_count"]
+    next_address = view_count
     by_view = {}
     for rows in pools:
         for row in rows:
@@ -184,7 +188,7 @@ def select(root,run,baseline,meta,paths,pixels,config,production_id):
     for row in chosen:
         target = targets[row["slot"]]
         row.update(source_pts=target["source_pts"],source_time_base=target["source_time_base"],
-                   selection_method="registered-luminance-motion",selection_score=row["shape_score"])
+                   selection_method=method,selection_score=row["shape_score"])
     write_table(root/"candidates.parquet",list(values.values()))
     write_table(root/"choices.parquet",[r for rows in pools for r in rows])
     write_table(root/"display.parquet",display)
@@ -193,6 +197,10 @@ def select(root,run,baseline,meta,paths,pixels,config,production_id):
         "changed_frames":sum(a["view_id"]!=b["view_id"] for a,b in zip(baselines,chosen)),
         "mean_shape_score":float(np.mean([r["shape_score"] for r in chosen])),
         "baseline_mean_shape_score":float(np.mean([r["shape_score"] for r in baselines])),
+        "visible_frames":sum(r.get("visible",False) for r in chosen),
+        "baseline_visible_frames":sum(r.get("visible",False) for r in baselines),
+        "photo_changes":sum(a["tile_id"]!=b["tile_id"] for a,b in zip(chosen,chosen[1:])),
+        "baseline_photo_changes":sum(a["tile_id"]!=b["tile_id"] for a,b in zip(baselines,baselines[1:])),
         "source_frame_counts":dict(Counter(r["source_id"] for r in chosen)),
         "selected_views":len({r["view_id"] for r in chosen}),"candidate_views":len(values)}
     write_json(root/"selection-summary.json",summary)

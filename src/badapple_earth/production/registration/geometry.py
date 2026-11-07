@@ -38,10 +38,12 @@ def parameters_from_matrix(matrix,size=SIZE):
     angle = math.degrees(math.atan2(b,a))
     scale = math.hypot(a,b)
     zoom = min(1.,scale/maximum_scale(angle,size))
-    hx,hy = (abs(a)*w+abs(b)*h)/2,(abs(d)*w+abs(e)*h)/2
     cx,cy = a*w/2+b*h/2+c,d*w/2+e*h/2+f
-    u = (cx-hx-1)/max(w-2*hx-2,1e-7)
-    v = (cy-hy-1)/max(h-2*hy-2,1e-7)
+    effective = maximum_scale(angle,size)*zoom
+    cosine,sine = abs(math.cos(math.radians(angle))),abs(math.sin(math.radians(angle)))
+    hx,hy = effective*(cosine*w+sine*h)/2,effective*(sine*w+cosine*h)/2
+    u = (cx-hx-1)/(w-2*hx-2) if w-2*hx-2>1e-6 else .5
+    v = (cy-hy-1)/(h-2*hy-2) if h-2*hy-2>1e-6 else .5
     return np.array([np.clip(u,0,1),np.clip(v,0,1),zoom,angle],np.float64)
 
 

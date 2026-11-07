@@ -1,0 +1,20 @@
+{
+  "source": "data/runs/p6-silhouette-shape-1.5m-full",
+  "baseline": "data/runs/p6-registered-1.5m-full",
+  "quality_baseline": "data/runs/p6-silhouette-luminance-1.5m-full",
+  "target_pixel_cache": "data/runs/p6-registered-1.5m-full/target-pixels.npy",
+  "output": "data/runs/p6-tracked-1.5m-full",
+  "end_seconds": 218.5,
+  "workers": 8,
+  "tracking_radius": 15,
+  "tracking_prior_weight": 2.0,
+  "shape_tolerance": 0.025,
+  "max_candidates": 16,
+  "continuity_weight": 0.2,
+  "appearance_weight": 1.0,
+  "motion_weight": 8.0,
+  "render_workers": 4,
+  "encoder_threads": 2,
+  "segment_frames": 180,
+  "monochrome": true
+}

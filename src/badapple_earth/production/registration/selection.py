@@ -7,6 +7,7 @@ import numpy as np
 
 from ...matching.views import rotation_recipe
 from .geometry import SIZE,image_points
+from ..silhouette.features import balanced_weights
 
 
 def matrix(row):
@@ -61,11 +62,15 @@ def reduce_options(options,baselines,config):
     return result
 
 
-def choose(pools,pixels,config):
-    motion,confidence = source_motion(pixels)
+def choose(pools,pixels,config,motion_transforms=None,confidence=None):
+    if motion_transforms is None:
+        motion,confidence = source_motion(pixels)
+        motion_transforms = np.tile(np.eye(3),(len(pixels),1,1))
+        motion_transforms[:,:2,2] = motion
     backs,costs,previous = [],None,None
     for index,rows in enumerate(pools):
         features = np.asarray([r["luminance"] for r in rows],np.float32)
+        appearance = np.asarray([r["appearance"] for r in rows],np.float32).reshape(-1,24,32)/255 if config.get("appearance_weight",0) else None
         poses = np.asarray([image_points(matrix(r)) for r in rows],np.float64)
         best = max(r["shape_score"] for r in rows)
         unary = np.asarray([best-r["shape_score"] for r in rows])
@@ -76,13 +81,26 @@ def choose(pools,pixels,config):
             differences = previous_features[:,None,:]-features[None,:,:]
             edges = config["continuity_weight"]*np.sum(differences*differences,axis=-1)
             same = np.asarray([[a["tile_id"]==b["tile_id"] for b in rows] for a in previous])
-            residual = poses[None,:,:,:]-previous_poses[:,None,:,:]-motion[index]
+            forward = motion_transforms[index]
+            predicted = previous_poses@forward[:2,:2].T+forward[:2,2]
+            residual = poses[None,:,:,:]-predicted[:,None,:,:]
             edges += same*config["motion_weight"]*confidence[index]*np.mean(residual*residual,axis=(-1,-2))
+            if appearance is not None and confidence[index]>0:
+                scale = np.diag([32,24,1.])
+                warp = (scale@forward@np.linalg.inv(scale))[:2].astype(np.float32)
+                valid = cv2.warpAffine(np.ones((24,32),np.float32),warp,(32,24),flags=cv2.INTER_LINEAR)>.999
+                weights = balanced_weights(pixels[index].astype(np.float32)/255)*valid.ravel()
+                weights /= max(weights.sum(),1e-10)
+                moving = np.stack([cv2.warpAffine(p,warp,(32,24),flags=cv2.INTER_LINEAR) for p in previous_appearance]).reshape(-1,768)
+                current = appearance.reshape(-1,768)
+                differences = (moving*moving)@weights[:,None]+((current*current)@weights)[None,:]-2*(moving*weights)@current.T
+                edges += config["appearance_weight"]*confidence[index]*np.maximum(differences,0)
             total = costs[:,None]+edges
             parent = np.argmin(total,axis=0)
             costs = unary+total[parent,np.arange(len(rows))]
             backs.append(parent)
         previous,previous_features,previous_poses = rows,features,poses
+        previous_appearance = appearance
     selected = [int(np.argmin(costs))]
     for back in reversed(backs[1:]):selected.append(int(back[selected[-1]]))
     return [rows[i] for rows,i in zip(pools,reversed(selected))]
