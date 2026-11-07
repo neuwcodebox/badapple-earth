@@ -1,0 +1,8 @@
+{
+  "baseline_run": "data/runs/p6-aerial120-views30-full",
+  "index": "data/index/p5-aerial-1.5m",
+  "shape_config": "config/silhouette-1.5m.json",
+  "shape_output": "data/runs/p6-silhouette-shape-1.5m-full",
+  "luminance_config": "config/silhouette-luminance-1.5m.json",
+  "output": "data/runs/p6-silhouette-luminance-1.5m-full"
+}

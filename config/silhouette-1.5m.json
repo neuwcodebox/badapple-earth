@@ -1,0 +1,54 @@
+{
+  "run": "data/runs/p6-aerial150-input",
+  "retrieval_k": 512,
+  "candidate_batch": 8192,
+  "target_batch": 256,
+  "workers": 8,
+  "weights": [
+    0.35,
+    0.35,
+    0.3
+  ],
+  "region_contrast_min": 0.08,
+  "edge_contrast_min": 0.08,
+  "edge_contrast_scale": 0.25,
+  "coverage_min": 0.5,
+  "reversed_max": 0.15,
+  "packed_sources": [
+    {
+      "cache": "data/packed/p5-1m",
+      "fine": "data/packed/p5-1m-fine",
+      "index": "data/index/p5-1m"
+    },
+    {
+      "cache": "data/packed/p5-aerial-interim-new",
+      "fine": "data/packed/p5-aerial-interim-new-fine",
+      "index": "data/index/p5-aerial-interim-new"
+    }
+  ],
+  "affine_configs": [
+    "config/views30.json"
+  ],
+  "additional_packed": {
+    "cache": "data/packed/p5-aerial-last68200",
+    "fine": "data/packed/p5-aerial-last68200-fine",
+    "index": "data/index/p5-aerial-last68200"
+  },
+  "additional_affine": "config/views30-delta.json",
+  "end_seconds": 218.5,
+  "reuse_searches": [],
+  "shape_tolerance": 0.02,
+  "max_candidates": 24,
+  "color_weight": 0.2,
+  "render_workers": 4,
+  "encoder_threads": 2,
+  "segment_frames": 180,
+  "prepared_sources": [
+    "data/prepared/p5-expand-300k"
+  ],
+  "incremental_retrieval": "data/runs/p6-silhouette-color-full",
+  "reuse_score_runs": [
+    "data/runs/p6-silhouette-color-full"
+  ],
+  "candidates_only": true
+}

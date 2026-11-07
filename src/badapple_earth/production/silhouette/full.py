@@ -58,21 +58,47 @@ def score_group(groups,cache,config):
     return rows
 
 
-def shortlists(root,run,targets,result):
+def shortlists(root,run,targets,result,reuse_runs=()):
     destination = root/"shortlists.parquet"
     if destination.exists():return
     inverse = np.load(run/"search/query_inverse.npy",allow_pickle=False)
     matches = pq.read_table(run/"search/matches.parquet",columns=["query","dense_row"]).to_pylist()
     base = defaultdict(list)
     for row in matches:base[row["query"]].append(row["dense_row"])
+    preserved = defaultdict(list)
+    for prior in reuse_runs:
+        for name in ("choices.parquet","display.parquet"):
+            for row in pq.read_table(Path(prior)/name,columns=["slot","dense_row"]).to_pylist():
+                preserved[row["slot"]].append(row["dense_row"])
     positions,slots = [],[]
     for i,frame in enumerate(targets):
-        chosen = np.unique(np.concatenate([*result["positions"][:,i],base[int(inverse[frame["slot"]])]]))
+        chosen = np.unique(np.concatenate([*result["positions"][:,i],base[int(inverse[frame["slot"]])],
+                                          np.asarray(preserved[frame["slot"]],np.int64)]))
         positions.append(chosen)
         slots.append(np.full(len(chosen),frame["slot"],np.int32))
     temporary = destination.with_suffix(".tmp")
     pq.write_table(pa.table({"slot":np.concatenate(slots),"dense_row":np.concatenate(positions)}),temporary,compression="zstd")
     temporary.replace(destination)
+
+
+def reused_score_paths(config):
+    paths = []
+    for prior in config.get("reuse_score_runs",[]):
+        prior = Path(prior)
+        manifest = read_manifest(prior)
+        if manifest["status"]!="complete":raise ValueError("Reuse only finished shape scores")
+        if any(manifest["config"][key]!=config[key] for key in (
+                "weights","region_contrast_min","edge_contrast_min","edge_contrast_scale","coverage_min","reversed_max")):
+            raise ValueError("Reused shape scores need identical metric settings")
+        if str(prior)!=config.get("incremental_retrieval"):
+            raise ValueError("Reused scores must share the validated retrieval baseline")
+        paths.extend(sorted((prior/"scores").glob("*.parquet")))
+        paths.extend(Path(p)/"evaluations.parquet" for p in manifest["config"].get("reuse_searches",[]))
+    return paths
+
+
+def pair_keys(table,stride):
+    return table["dense_row"].combine_chunks().to_numpy()*stride+table["slot"].combine_chunks().to_numpy()
 
 
 def score_all(root,run,targets,metadata,config,reused_slots):
@@ -81,6 +107,12 @@ def score_all(root,run,targets,metadata,config,reused_slots):
     positions = table["dense_row"].combine_chunks().to_numpy()
     slots = table["slot"].combine_chunks().to_numpy()
     keep = ~np.isin(slots,np.array(sorted(reused_slots),np.int32))
+    prior_paths = reused_score_paths(config)
+    if prior_paths:
+        stride = max(r["slot"] for r in targets)+1
+        known = np.unique(np.concatenate([pair_keys(pq.read_table(p,columns=["slot","dense_row"]),stride) for p in prior_paths]))
+        keep &= ~np.isin(positions*stride+slots,known)
+        print(f"Shape pairs reused: {int((~keep).sum()):,}; new: {int(keep.sum()):,}",flush=True)
     positions,slots = positions[keep],slots[keep]
     order = np.argsort(positions,kind="stable")
     positions,slots = positions[order],slots[order]
@@ -118,7 +150,7 @@ def score_all(root,run,targets,metadata,config,reused_slots):
         print(f"Full silhouette scores: {done}/{len(paths)} batches",flush=True)
     batches([((chunk,str(root/"target-features"),config),paths[i]) for i,chunk in enumerate(chunks) if not paths[i].exists()],
             score_group,save,config["workers"],config["pause_file"])
-    return paths
+    return [*prior_paths,*paths]
 
 
 def reduced(root,run,targets,metadata,score_paths,config,reused_roots):
@@ -126,6 +158,10 @@ def reduced(root,run,targets,metadata,score_paths,config,reused_roots):
     if destination.exists():return
     baseline = {r["slot"]:r for r in pq.read_table(run/"selected.parquet").to_pylist() if r["slot"]<len(targets)}
     allowed = set(baseline)
+    wanted = None
+    if config.get("reuse_score_runs"):
+        stride = max(allowed)+1
+        wanted = np.unique(pair_keys(pq.read_table(root/"shortlists.parquet"),stride))
     near,display,control = defaultdict(list),defaultdict(list),{}
     def key(row):return (-row["shape_score"],row["balanced_mse"],row["view_id"])
     def consume(rows):
@@ -154,7 +190,14 @@ def reduced(root,run,targets,metadata,score_paths,config,reused_roots):
     for previous in reused_roots:
         consume(pq.read_table(Path(previous)/"evaluations.parquet").to_pylist())
     for filename in score_paths:
-        for batch in pq.ParquetFile(filename).iter_batches(batch_size=32768):consume(batch.to_pylist())
+        for batch in pq.ParquetFile(filename).iter_batches(batch_size=32768):
+            table = pa.Table.from_batches([batch])
+            if wanted is not None:
+                keys = pair_keys(table,stride)
+                offsets = np.searchsorted(wanted,keys)
+                keep = (offsets<len(wanted)) & (wanted[np.minimum(offsets,len(wanted)-1)]==keys)
+                table = table.filter(pa.array(keep))
+            consume(table.to_pylist())
         check_pause(config["pause_file"])
     cache = TargetCache(root/"target-features")
     records,shown_records = [],[]
@@ -235,13 +278,14 @@ def assets(root,run,targets,metadata,config,reuse_assets=None):
             config["workers"],config["pause_file"])
     fps = read_manifest(run/"targets")["frame_rate"]
     duration = float(len(targets)/Fraction(fps))
+    places = read_manifest(index)["rows"]
     frames = []
     for frame,choice in zip(targets,selected):
         rows = shown[frame["slot"]]
         image = native/(choice["view_id"]+".png")
         if not image.exists():image = root/"assets/thumbs"/(choice["view_id"]+".png")
         frames.append({"slot":frame["slot"],"source_pts":frame["source_pts"],"source_time_base":frame["source_time_base"],
-                       "time":frame["target_time"],"duration":duration,"total":len(targets),"places":1200000,
+                       "time":frame["target_time"],"duration":duration,"total":len(targets),"places":places,
                        "source_image":str((run/"targets"/frame["frame"]).resolve()),"credit":frame_credit(choice),
                        "selected_candidate":next(i for i,r in enumerate(rows) if r["view_id"]==choice["view_id"]),
                        "score_label":"SHAPE / COLOR CONTINUITY","selected_image":str(image.resolve()),
@@ -262,7 +306,7 @@ def produce(config,output,resume=False,stop_after_search=False):
             "production_id":production_id,"version":FULL_VERSION,"config":config,"status":"starting",
             "started_at":datetime.now(timezone.utc).isoformat()}
         if state["production_id"]!=production_id:raise ValueError("Full output belongs to a different algorithm or input")
-        if state["status"]=="complete":return state
+        if state["status"] in ("complete","candidates_ready"):return state
         if resume:
             if pause_file.exists():pause_file.unlink()
             state.pop("error_type",None)
@@ -279,12 +323,15 @@ def produce(config,output,resume=False,stop_after_search=False):
         try:
             stage("retrieval")
             folder = root/"retrieval"
-            with writer_lock(folder):result = search(run,folder,runtime,targets,sources(config))
+            specifications = sources(config)
+            with writer_lock(folder):
+                write_json(folder/"sources.json",specifications)
+                result = search(run,folder,runtime,targets,specifications)
             state["completed_stage"] = "retrieval"
             if stop_after_search:
                 pause_file.touch()
                 raise InterruptedError("Retrieval completed; paused before subsequent processing")
-            shortlists(root,run,targets,result)
+            shortlists(root,run,targets,result,config.get("reuse_score_runs",[]))
             del result
             stage("metadata")
             if (root/"candidates.parquet").exists():
@@ -298,7 +345,8 @@ def produce(config,output,resume=False,stop_after_search=False):
                 metadata = {r["dense_row"]:r for r in table.to_pylist()}
             else:
                 positions = np.unique(pq.read_table(root/"shortlists.parquet",columns=["dense_row"])["dense_row"].combine_chunks().to_numpy())
-                metadata = resolve_candidates(root,run,sources(config),positions,config["workers"],config["reuse_searches"],str(pause_file))
+                metadata = resolve_candidates(root,run,specifications,positions,config["workers"],
+                                              [*config["reuse_searches"],*config.get("reuse_score_runs",[])],str(pause_file))
             stage("target-features")
             build_targets(run,root/"target-features",targets,str(pause_file))
             load_target.cache_clear()
@@ -313,6 +361,14 @@ def produce(config,output,resume=False,stop_after_search=False):
             paths = score_all(root,run,targets,metadata,runtime,reused_slots)
             stage("candidate-reduction")
             reduced(root,run,targets,metadata,paths,runtime,config["reuse_searches"])
+            if config.get("candidates_only"):
+                original = read_manifest(run/"targets")
+                (root/"targets").mkdir(exist_ok=True)
+                write_json(root/"targets/manifest.json",{**original,"count":len(targets),
+                           "duration_seconds":float(len(targets)/Fraction(original["frame_rate"]))})
+                state.update(status="candidates_ready",finished_at=datetime.now(timezone.utc).isoformat())
+                write_json(root/"manifest.json",state)
+                return state
             stage("color-continuity")
             choose_colors(root,run,targets,metadata,runtime)
             stage("assets")
@@ -322,7 +378,7 @@ def produce(config,output,resume=False,stop_after_search=False):
             for directory in (root/"targets",root/"search"):directory.mkdir(exist_ok=True)
             write_json(root/"targets/manifest.json",{**original,"target_set_id":identity([original["target_set_id"],config["end_seconds"]]),
                        "count":len(targets),"duration_seconds":float(len(targets)/Fraction(original["frame_rate"]))})
-            write_json(root/"search/manifest.json",{"run_id":production_id,"candidate_count":1200000})
+            write_json(root/"search/manifest.json",{"run_id":production_id,"candidate_count":read_manifest(Path(read_manifest(run)["config"]["index"]))["rows"]})
             render_config = {**read_manifest(run)["config"],**runtime,"selection_method":"silhouette-color",
                              "preset":"medium","crf":18,"audio_mode":"source_local"}
             result = render(root,render_config,pq.read_table(root/"frame-plan.parquet").to_pylist())

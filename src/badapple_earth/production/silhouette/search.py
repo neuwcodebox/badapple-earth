@@ -73,6 +73,19 @@ def sources(config):
     expected = read_manifest(Path(config["run"])/"search")
     if cursor != expected["view_count"]:
         raise ValueError("Silhouette sources must exactly cover the completed production view space")
+    for path in config.get("prepared_sources",[]):
+        root = Path(path)
+        prepared = read_manifest(root)
+        if prepared["status"] != "complete":
+            raise ValueError("Use completed prepared photo chunks")
+        before = cursor
+        for chunk in prepared["chunks"]:
+            if chunk["status"] != "complete":raise ValueError("Incomplete prepared chunk")
+            folder = root/chunk["path"]
+            packed({"cache":str(folder/"packed"),"fine":str(folder/"fine"),"index":str(folder/"index")})
+            affine(str(folder/"views.json"))
+        if cursor-before != prepared["prepared_views"]:
+            raise ValueError("Prepared view count differs from frozen chunks")
     return result
 
 
@@ -109,7 +122,7 @@ def search(run,root,config,targets,specifications):
     scores = np.full((2,len(fine),k),-np.inf,np.float32)
     positions = np.full(scores.shape,-1,np.int64)
     reused = np.zeros(len(fine),bool)
-    if config.get("reuse_searches"):
+    if config.get("reuse_searches") and not config.get("incremental_retrieval"):
         import pyarrow.parquet as pq
         all_targets = pq.read_table(run/"targets/targets.parquet").to_pylist()
         raw_targets = np.load(run/"targets/gray_fine.npy",mmap_mode="r",allow_pickle=False)
@@ -135,6 +148,25 @@ def search(run,root,config,targets,specifications):
                         reused[query] = True
     source_begin,offset_begin,previous = 0,0,0.
     path = root/"retrieval.npz"
+    baseline_views = 0
+    if config.get("incremental_retrieval"):
+        prior = Path(config["incremental_retrieval"])
+        manifest = read_manifest(prior)
+        if manifest["status"] not in ("complete","candidates_ready"):
+            raise ValueError("Incremental retrieval requires a finished baseline")
+        prefix = sources(manifest["config"])
+        if [(s["identity"],s["start"],s["rows"]) for s in prefix] != [
+                (s["identity"],s["start"],s["rows"]) for s in specifications[:len(prefix)]]:
+            raise ValueError("Incremental sources must preserve every baseline view address")
+        expected = identity([VERSION,read_manifest(run/"targets")["target_set_id"],
+                             [s["identity"] for s in prefix],slots,k])
+        with np.load(prior/"retrieval/retrieval.npz",allow_pickle=False) as saved:
+            if (str(saved["search_id"])!=expected or int(saved["source"])!=len(prefix)
+                    or int(saved["offset"])!=0 or not np.array_equal(saved["inverse"],inverse)):
+                raise ValueError("Incremental baseline must cover identical targets, metric and top-k")
+            scores,positions = saved["scores"].copy(),saved["positions"].copy()
+        source_begin = len(prefix)
+        baseline_views = sum(s["rows"] for s in prefix)
     if path.exists():
         with np.load(path,allow_pickle=False) as saved:
             if str(saved["search_id"]) != search_id:
@@ -157,8 +189,9 @@ def search(run,root,config,targets,specifications):
                      source=source,offset=offset,elapsed_seconds=seconds)
         temporary.replace(path)
         write_json(root/"progress.json",{"stage":"retrieval","completed_views":completed,"total_views":total,
+                   "reused_views":baseline_views,"new_completed_views":completed-baseline_views,
                    "unique_queries":len(fine),"reused_queries":int(reused.sum()),"searched_queries":len(active),"elapsed_seconds":round(seconds,3),
-                   "remaining_seconds":round((total-completed)*seconds/max(completed,1))})
+                   "remaining_seconds":round((total-completed)*seconds/max(completed-baseline_views,1))})
         print(f"Silhouette region + outline: {completed:,}/{total:,} views; {seconds:.1f}s",flush=True)
         check_pause(config.get("pause_file",root/"pause.request"))
     if not len(active):checkpoint(len(specifications),0,total)

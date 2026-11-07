@@ -27,7 +27,7 @@ from .temporal import descriptors,path,LUMINANCE_VERSION
 def produce(config,output,resume=False):
     source_root,root = Path(config["source"]),Path(output).resolve()
     source = read_manifest(source_root)
-    if source["status"]!="complete":raise ValueError("Use completed shape candidates")
+    if source["status"] not in ("complete","candidates_ready"):raise ValueError("Use completed shape candidates")
     if config["continuity_weight"]<0:raise ValueError("Continuity weight must be nonnegative")
     run = Path(source["config"]["run"])
     original = read_manifest(run)
@@ -71,12 +71,13 @@ def produce(config,output,resume=False):
                 chosen = [{**metadata[rows[i]["dense_row"]],**rows[i],"source_pts":f["source_pts"],
                            "source_time_base":f["source_time_base"],"selection_method":"luminance-continuous",
                            "selection_score":rows[i]["shape_score"]} for f,rows,i in zip(targets,candidates,indices)]
-                previous = pq.read_table(source_root/"selected.parquet").to_pylist()
+                previous = pq.read_table(source_root/"selected.parquet").to_pylist() if (source_root/"selected.parquet").exists() else None
                 jump = {}
                 for name,rows in (("previous_color_path",previous),("luminance_path",chosen)):
+                    if rows is None:continue
                     sequence = [measured[r["slot"],r["dense_row"]] for r in rows]
                     jump[name] = float(np.mean([np.sum((a-b)**2) for a,b in zip(sequence,sequence[1:])]))
-                state["selection_summary"] = {"changed_frames":sum(a["view_id"]!=b["view_id"] for a,b in zip(previous,chosen)),
+                state["selection_summary"] = {"changed_frames":sum(a["view_id"]!=b["view_id"] for a,b in zip(previous,chosen)) if previous else None,
                     "mean_luminance_jump":jump,"source_frames":len(chosen),"candidate_views":len(needed),
                     "mean_shape_score":float(np.mean([r["shape_score"] for r in chosen]))}
                 write_table(root/"selected.parquet",chosen)
@@ -85,11 +86,11 @@ def produce(config,output,resume=False):
                     try:(root/name).hardlink_to(source_root/name)
                     except OSError:shutil.copyfile(source_root/name,root/name)
             stage("assets")
-            assets(root,run,targets,metadata,runtime,reuse_assets=source_root)
+            assets(root,run,targets,metadata,runtime,reuse_assets=Path(config.get("reuse_assets",source_root)))
             stage("render")
             for folder in (root/"targets",root/"search"):folder.mkdir(exist_ok=True)
             write_json(root/"targets/manifest.json",read_manifest(source_root/"targets"))
-            write_json(root/"search/manifest.json",{"run_id":run_id,"candidate_count":1200000})
+            write_json(root/"search/manifest.json",{"run_id":run_id,"candidate_count":read_manifest(Path(original["config"]["index"]))["rows"]})
             render_config = {**original["config"],**runtime,"end_seconds":source["config"]["end_seconds"],
                              "preset":"medium","crf":18,"audio_mode":"source_local"}
             result = render(root,render_config,pq.read_table(root/"frame-plan.parquet").to_pylist())

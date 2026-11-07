@@ -362,6 +362,17 @@ uv run python -m badapple_earth.production.silhouette.monochrome --resume
 
 설정은 `config/silhouette-luminance.json`, 출력은 `data/runs/p6-silhouette-luminance-full/`의 `final-16x9.mp4`와 `satellite-full.mp4`다. 중단하려면 같은 명령의 `--resume` 대신 `--pause`를 사용한다. 기존 컬러와 단순 흑백 변환 영상도 보존한다.
 
+추가 30만 장의 준비가 완료된 150만 후보 전곡은 아래 명령으로 제작한다. 기존 120만의 2,880만 view 검색 결과와 프레임·view 점수를 재사용하고, 신규 720만 view만 검색한다. 형태 후보가 준비되면 명암 연속 선택과 두 흑백 영상 제작으로 이어진다.
+
+```powershell
+$env:OPENBLAS_NUM_THREADS='8'
+$env:OMP_NUM_THREADS='8'
+$env:NUMBA_NUM_THREADS='8'
+uv run python -m badapple_earth.production.silhouette.expansion --resume
+```
+
+설정은 `config/produce-expand.json`이다. 중단은 같은 명령의 `--resume` 대신 `--pause`로 요청하며, 재개하면 저장한 검색·평가 배치·인코딩 구간을 사용한다. 형태 단계는 `data/runs/p6-silhouette-shape-1.5m-full/`, 최종 두 영상은 `data/runs/p6-silhouette-luminance-1.5m-full/`에 저장한다. 기존 완성 영상과 입력 MP4는 보존한다.
+
 ## 사용 방법
 
 기본 제작 흐름은 다음과 같다.
