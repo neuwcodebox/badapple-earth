@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import time
 
 from PIL import Image, ImageDraw
 
@@ -11,7 +12,16 @@ from PIL import Image, ImageDraw
 def write_json(path: Path, value):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    # Concurrent readers and antivirus scanners can briefly hold the old name
+    # on Windows. Keep the complete temporary file and retry only replacement.
+    for attempt in range(8):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            if attempt == 7:
+                raise
+            time.sleep(min(.05 * 2**attempt, .5))
 
 
 def checksum(path: Path) -> str:

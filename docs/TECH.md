@@ -351,6 +351,8 @@ data/
 
 파일과 SQLite를 하나의 DB 트랜잭션이라고 가정하지 않는다. crash가 발생하면 미공개 staging은 무시/정리하고, 공개 shard와 job checkpoint의 차이를 재조정하여 이미 commit한 tile ID를 중복 추가하지 않는다. 가능하면 단일 writer가 manifest를 갱신한다.
 
+JSON 공개는 완성된 임시 파일을 원자적으로 교체한다. Windows의 일시적 `PermissionError`에는 교체만 최대 8회 재시도하며, 계속 거부되면 기존 공개 파일과 임시 파일을 보존하고 실패를 반환한다. 읽기·수집을 다시 실행하거나 접근 권한을 임의 변경하지 않는다.
+
 작업 상태는 `PENDING / RUNNING / DONE / FAILED`를 사용하고, quota에 의한 중단은 `DONE`이 아니라 창 cursor가 있는 `PENDING`으로 남긴다. 단일 writer의 OS 파일 잠금은 프로세스 종료 시 해제되므로, 다음 writer가 잠금을 얻은 뒤 남은 RUNNING을 회수한다. 읽은 블록은 미처리 창이 남아 있는 동안 압축 캐시에 유지해 재개 시 다시 받지 않는다. 영구 실패와 재시도 가능한 오류를 분리한다. 완료 판단에 파일 존재 여부만 쓰지 않고 manifest와 행 매핑을 사용한다.
 
 #### 4.6 용량·메모리 계획
