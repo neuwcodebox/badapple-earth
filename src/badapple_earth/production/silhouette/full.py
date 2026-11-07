@@ -252,9 +252,14 @@ def assets(root,run,targets,metadata,config,reuse_assets=None):
         shown[frame["slot"]] = rows
         for row in rows:photos[row["view_id"]] = metadata[row["dense_row"]]
     values = list(photos.values())
-    for start in range(0,len(values),128):
-        cached_photos(Path(reuse_assets) if reuse_assets else run,root,values[start:start+128],source["config"],(256,191),"assets/thumbs")
-        check_pause(config["pause_file"])
+    thumbnail_jobs = [(((Path(reuse_assets) if reuse_assets else run),root,values[start:start+128],source["config"],(256,191),"assets/thumbs"),start)
+                      for start in range(0,len(values),128)]
+    completed_thumbnails = 0
+    def thumbs_saved(start,result):
+        nonlocal completed_thumbnails
+        completed_thumbnails += min(128,len(values)-start)
+        print(f"Prepared candidate thumbnails: {completed_thumbnails:,}/{len(values):,}",flush=True)
+    batches(thumbnail_jobs,cached_photos,thumbs_saved,config["workers"],config["pause_file"])
     index = Path(source["config"]["index"])
     directories = {m["index_id"]:p for p,m,_ in members(index,read_manifest(index))}
     native,groups = root/"assets/selected",defaultdict(dict)
