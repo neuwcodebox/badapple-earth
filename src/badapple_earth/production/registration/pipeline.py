@@ -145,6 +145,17 @@ def fine_groups(paths,meta,config):
     return sorted(files.items())
 
 
+def evaluated_display(root,source):
+    """Reuse measured runners-up and their original photo metadata."""
+    root,source = Path(root),Path(source)
+    measured = pq.read_table(root/"display.parquet").to_pylist()
+    positions = sorted({r["dense_row"] for r in measured})
+    metadata_file = root/"candidates.parquet"
+    if not metadata_file.exists():metadata_file = source/"candidates.parquet"
+    metadata = {r["dense_row"]:r for r in pq.read_table(metadata_file,filters=[("dense_row","in",positions)]).to_pylist()}
+    return [{**metadata[r["dense_row"]],**r} for r in measured]
+
+
 def select(root,run,baseline,meta,paths,pixels,config,production_id):
     if (root/"selected.parquet").exists():return
     baselines = pq.read_table(baseline/"selected.parquet").to_pylist()
@@ -161,7 +172,7 @@ def select(root,run,baseline,meta,paths,pixels,config,production_id):
     for filename in paths:options.extend(pq.read_table(filename).to_pylist())
     pools = reduce_options(options,baselines,config)
     chosen = choose(pools,pixels,config)
-    shown = display_options([*baselines,*options],chosen,config["shape_tolerance"])
+    shown = display_options([*baselines,*options,*evaluated_display(baseline,config["source"])],chosen)
     write_selection(root,run,baselines,pools,chosen,read_manifest(root/"retrieval")["view_count"],shown=shown)
 
 
@@ -169,7 +180,7 @@ def write_selection(root,run,baselines,pools,chosen,view_count,method="registere
     values,display = {},[]
     next_address = view_count
     by_view = {}
-    shown = shown if shown is not None else display_options([r for rows in pools for r in rows],chosen,.025)
+    shown = shown if shown is not None else display_options([r for rows in pools for r in rows],chosen)
     for rows in [*pools,*shown]:
         for row in rows:
             if row["view_id"] not in by_view:

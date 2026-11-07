@@ -19,21 +19,24 @@ from badapple_earth.production.registration.tracking import tracking_groups
 import cv2
 
 
-def test_display_uses_competitive_distinct_places_before_temporal_pruning():
+def test_display_ranks_five_evaluated_places_independently_of_selection_guards():
     def row(view,place,score,visible=True):
         return dict(slot=0,view_id=view,tile_id=place,shape_score=score,balanced_mse=.1,visible=visible)
     chosen = row("selected","A",.8)
     measured = [row("same-place-best","A",.82),row("B1","B",.819),row("B2","B",.818),
                 row("C","C",.81),row("weak","D",.7),row("invisible","E",.83,False)]
-    shown = display_options(measured,[chosen],.025)[0]
-    assert [r["view_id"] for r in shown]==["B1","C","selected"]
-    assert display_options(measured,[{**chosen,"visible":False}],.025)==[[{**chosen,"visible":False}]]
+    shown = display_options(measured,[chosen])[0]
+    assert [r["view_id"] for r in shown]==["invisible","B1","C","selected","weak"]
+    fallback = {**chosen,"visible":False,"fallback":"flat_target"}
+    assert len(display_options(measured,[fallback])[0])==5
+    with pytest.raises(ValueError,match="Five distinct evaluated places"):
+        display_options(measured[:3],[chosen])
 
 
 def test_display_caps_real_alternatives_at_five_and_keeps_exact_selected_pose():
     chosen = dict(slot=0,view_id="chosen",tile_id="chosen-place",shape_score=.79,balanced_mse=.1,visible=True)
     options = [{**chosen,"view_id":str(i),"tile_id":str(i),"shape_score":.8} for i in range(9)]
-    shown = display_options(options,[chosen],.025)[0]
+    shown = display_options(options,[chosen])[0]
     assert len(shown)==5 and chosen in shown and len({r["tile_id"] for r in shown})==5
 
 

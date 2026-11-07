@@ -62,22 +62,19 @@ def reduce_options(options,baselines,config):
     return result
 
 
-def display_options(options,selected,tolerance):
-    """Show competitive measured places before temporal pruning, without padding."""
+def display_options(options,selected):
+    """Show five distinct evaluated places, preserving the exact selected pose."""
     places = defaultdict(dict)
     key = lambda r:(-r["shape_score"],r["balanced_mse"],r["view_id"])
     for row in options:
-        if not row.get("visible",False):continue
         old = places[row["slot"]].get(row["tile_id"])
         if old is None or key(row)<key(old):places[row["slot"]][row["tile_id"]] = row
     result = []
     for choice in selected:
-        if not choice.get("visible",False) or choice.get("fallback")=="flat_target":
-            result.append([choice])
-            continue
         candidates = places[choice["slot"]]
-        best = max([choice["shape_score"],*[r["shape_score"] for r in candidates.values()]])
-        rows = [r for r in candidates.values() if r["shape_score"]>=best-tolerance and r["tile_id"]!=choice["tile_id"]]
+        rows = [r for r in candidates.values() if r["tile_id"]!=choice["tile_id"]]
+        if len(rows)<4:
+            raise ValueError(f"Five distinct evaluated places required at slot {choice['slot']}; change the layout if unavailable")
         result.append(sorted([choice,*sorted(rows,key=key)[:4]],key=key))
     return result
 

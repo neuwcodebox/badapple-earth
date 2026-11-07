@@ -20,7 +20,7 @@ from ..silhouette.full import assets
 from .assets import reuse_native
 from .geometry import parameters_from_matrix
 from .motion import build,propagation,VERSION as MOTION_VERSION
-from .pipeline import run_jobs,write_selection,verify,read_manifest_file
+from .pipeline import run_jobs,write_selection,verify,read_manifest_file,evaluated_display
 from .selection import matrix,reduce_options,choose,display_options
 from .workers import fine_job,appearance_job
 
@@ -95,7 +95,8 @@ def select(root,run,baseline,quality,meta,transforms,confidence,pixels,paths,sou
     display_candidates = [*original,*options]
     for path in sorted((baseline/"fine").glob("*.parquet")):
         display_candidates.extend(pq.read_table(path).to_pylist())
-    shown = display_options(display_candidates,chosen,config["shape_tolerance"])
+    display_candidates.extend(evaluated_display(quality,source))
+    shown = display_options(display_candidates,chosen)
     write_selection(root,run,original,pools,chosen,read_manifest(baseline/"retrieval")["view_count"],"tracked-motion-appearance",shown)
 
 
