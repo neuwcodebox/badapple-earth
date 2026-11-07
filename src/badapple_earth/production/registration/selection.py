@@ -47,6 +47,12 @@ def reduce_options(options,baselines,config):
     for baseline in baselines:
         rows = sorted(pools[baseline["slot"]].values(),key=lambda r:(-r["shape_score"],r["balanced_mse"],r["view_id"]))
         if baseline.get("fallback")=="flat_target":rows = [baseline]
+        elif not baseline.get("visible",False):
+            valid = [r for r in rows if r.get("visible",False)]
+            if valid:
+                cutoff = valid[0]["shape_score"]-config["shape_tolerance"]
+                rows = [r for r in valid if r["shape_score"]>=cutoff][:config["max_candidates"]]
+            else:rows = [baseline]
         else:
             cutoff = max(rows[0]["shape_score"]-config["shape_tolerance"],baseline["shape_score"])
             rows = [r for r in rows if r["shape_score"]>=cutoff][:config["max_candidates"]]

@@ -92,6 +92,9 @@ def test_registered_options_keep_baseline_quality_and_reject_invisible_shapes():
     assert {r['view_id'] for r in result[0]}=={'baseline','better'}
     flat = {**baseline,'fallback':'flat_target'}
     assert reduce_options(options,[flat],config)==[[flat]]
+    fallback = {**baseline,'visible':False,'fallback':'no_visible_candidate'}
+    visible = row('real-boundary',.59,True)
+    assert reduce_options([visible],[fallback],config)==[[visible]]
 
 
 def test_position_tolerant_retrieval_resumes_exactly_without_revisiting_saved_rows(tmp_path):
