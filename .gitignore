@@ -4,6 +4,17 @@
 Thumbs.db
 Desktop.ini
 
+# Machine-local credentials and coding-agent state.
+/.aws/
+/.azure/
+/.gcloud/
+/.codex/
+
+# Media accidentally placed next to the source tree.
+/*.mp4
+/*.mov
+/*.mkv
+
 # Real environment values stay local; examples contain dummy values only.
 .env
 .env.*

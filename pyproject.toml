@@ -5,8 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "badapple-earth"
 version = "0.1.0"
-description = "Local experiments with real satellite imagery for Bad Apple"
+description = "Match video frames with real satellite and aerial imagery"
 readme = "README.md"
+license-files = ["THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=2.2,<3",
@@ -25,6 +26,10 @@ dependencies = [
 
 [project.scripts]
 badapple-earth = "badapple_earth.cli:main"
+
+[project.urls]
+Repository = "https://github.com/neuwcodebox/badapple-earth"
+Issues = "https://github.com/neuwcodebox/badapple-earth/issues"
 
 [dependency-groups]
 dev = ["pytest>=8,<10"]
