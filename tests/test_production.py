@@ -38,7 +38,8 @@ def test_all_targets_keep_every_frame_and_its_original_pts(tmp_path):
         targets(config, tmp_path / "targets")
 
 
-def test_encoded_segments_keep_all_frames_and_resume_without_encoding_again(tmp_path, monkeypatch):
+@pytest.mark.parametrize("outputs",[("presentation","satellite"),("presentation",)])
+def test_encoded_segments_keep_all_frames_and_resume_without_encoding_again(tmp_path, monkeypatch,outputs):
     from badapple_earth.production import render
     project = Path(__file__).resolve().parents[1]
     config = json.loads((project / "config/production.json").read_text())
@@ -46,7 +47,7 @@ def test_encoded_segments_keep_all_frames_and_resume_without_encoding_again(tmp_
         pytest.skip("FFmpeg and a local render font are required")
     config["font_regular"] = str(project / config["font_regular"])
     config["font_bold"] = str(project / config["font_bold"])
-    config.update(preset="ultrafast", crop=[0, 0, 64, 48])
+    config.update(preset="ultrafast", crop=[0, 0, 64, 48],render_outputs=outputs)
     (tmp_path / "segments").mkdir()
     Image.new("RGB", (64, 48), "white").save(tmp_path / "photo.png")
     rows = [{"slot": i, "source_pts": i * 1001, "source_time_base": "1/30000", "time": i*1001/30000,
@@ -54,7 +55,10 @@ def test_encoded_segments_keep_all_frames_and_resume_without_encoding_again(tmp_
              "selected_image": "photo.png", "caption": "Real image metadata",
              "candidates": [{"path": "photo.png", "rank": n+1, "raw_mse": .01} for n in range(5)]} for i in range(3)]
     result = render.segment(str(tmp_path), rows, "30000/1001", config, "render")
+    assert ("satellite" in result)==("satellite" in outputs)
+    if "satellite" not in outputs:assert not list((tmp_path/"segments").glob("satellite-*.mp4"))
     for kind, size in [("presentation", (1920, 1080)), ("satellite", (64, 48))]:
+        if kind not in outputs:continue
         probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=nb_frames,width,height,avg_frame_rate",
                                 "-of", "json", str(tmp_path / "segments" / result[kind])], capture_output=True, check=True)
         stream = json.loads(probe.stdout)["streams"][0]

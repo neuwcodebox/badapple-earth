@@ -26,7 +26,7 @@ from ..silhouette.full import assets
 from ..variants.pipeline import write_table
 from .search import retrieve,VERSION as SEARCH_VERSION
 from .geometry import VERSION
-from .selection import reduce_options,choose
+from .selection import reduce_options,choose,display_options
 from .workers import initialize,coarse_job,fine_job,prepare_targets
 from .assets import reuse_native
 
@@ -161,14 +161,16 @@ def select(root,run,baseline,meta,paths,pixels,config,production_id):
     for filename in paths:options.extend(pq.read_table(filename).to_pylist())
     pools = reduce_options(options,baselines,config)
     chosen = choose(pools,pixels,config)
-    write_selection(root,run,baselines,pools,chosen,read_manifest(root/"retrieval")["view_count"])
+    shown = display_options([*baselines,*options],chosen,config["shape_tolerance"])
+    write_selection(root,run,baselines,pools,chosen,read_manifest(root/"retrieval")["view_count"],shown=shown)
 
 
-def write_selection(root,run,baselines,pools,chosen,view_count,method="registered-luminance-motion"):
+def write_selection(root,run,baselines,pools,chosen,view_count,method="registered-luminance-motion",shown=None):
     values,display = {},[]
     next_address = view_count
     by_view = {}
-    for rows in pools:
+    shown = shown if shown is not None else display_options([r for rows in pools for r in rows],chosen,.025)
+    for rows in [*pools,*shown]:
         for row in rows:
             if row["view_id"] not in by_view:
                 if row.get("registration_parameters") is not None:
@@ -177,13 +179,7 @@ def write_selection(root,run,baselines,pools,chosen,view_count,method="registere
                 else:by_view[row["view_id"]] = row["dense_row"]
             row["dense_row"] = by_view[row["view_id"]]
             values[row["dense_row"]] = row
-    for rows,selected in zip(pools,chosen):
-        distinct = {}
-        for row in rows:
-            if row["tile_id"] not in distinct:distinct[row["tile_id"]] = row
-        shown = list(distinct.values())[:5]
-        if not any(r["view_id"]==selected["view_id"] for r in shown):shown = shown[:4]+[selected]
-        display.extend(shown)
+    display = [r for rows in shown for r in rows]
     targets = pq.read_table(run/"targets/targets.parquet",columns=["slot","source_pts","source_time_base"]).to_pylist()
     for row in chosen:
         target = targets[row["slot"]]

@@ -10,13 +10,31 @@ from badapple_earth.production.registration.geometry import coefficients,metadat
 from badapple_earth.production.registration.align import coarse_search,refine,warped_gray,set_target_cache,target_image
 from badapple_earth.production.registration.workers import prepare_targets
 from badapple_earth.matching.affine import transform
-from badapple_earth.production.registration.selection import choose,reduce_options
+from badapple_earth.production.registration.selection import choose,reduce_options,display_options
 from badapple_earth.production.registration.search import retrieve
 from badapple_earth.production.registration.pipeline import fine_groups
 from badapple_earth.production.registration.assets import relative_view,reuse_native
 from badapple_earth.production.registration.motion import estimate,propagation
 from badapple_earth.production.registration.tracking import tracking_groups
 import cv2
+
+
+def test_display_uses_competitive_distinct_places_before_temporal_pruning():
+    def row(view,place,score,visible=True):
+        return dict(slot=0,view_id=view,tile_id=place,shape_score=score,balanced_mse=.1,visible=visible)
+    chosen = row("selected","A",.8)
+    measured = [row("same-place-best","A",.82),row("B1","B",.819),row("B2","B",.818),
+                row("C","C",.81),row("weak","D",.7),row("invisible","E",.83,False)]
+    shown = display_options(measured,[chosen],.025)[0]
+    assert [r["view_id"] for r in shown]==["B1","C","selected"]
+    assert display_options(measured,[{**chosen,"visible":False}],.025)==[[{**chosen,"visible":False}]]
+
+
+def test_display_caps_real_alternatives_at_five_and_keeps_exact_selected_pose():
+    chosen = dict(slot=0,view_id="chosen",tile_id="chosen-place",shape_score=.79,balanced_mse=.1,visible=True)
+    options = [{**chosen,"view_id":str(i),"tile_id":str(i),"shape_score":.8} for i in range(9)]
+    shown = display_options(options,[chosen],.025)[0]
+    assert len(shown)==5 and chosen in shown and len({r["tile_id"] for r in shown})==5
 
 
 def test_global_descriptor_preserves_translation_and_rejects_uniform_content():

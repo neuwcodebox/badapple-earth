@@ -33,9 +33,9 @@ def encoder(path, width, height, fps, config, log):
 def segment(root_string, rows, fps, config, render_id):
     root = Path(root_string)
     first, stop = rows[0]["slot"], rows[-1]["slot"] + 1
-    directory = root / "segments"
+    directory = root / config.get("render_segments","segments")
     marker = directory / f"{first:06d}-{stop:06d}.json"
-    paths = {name: directory / f"{name}-{first:06d}-{stop:06d}.mp4" for name in ("presentation", "satellite")}
+    paths = {name: directory / f"{name}-{first:06d}-{stop:06d}.mp4" for name in config.get("render_outputs",("presentation", "satellite"))}
     if marker.exists() and all(path.exists() for path in paths.values()):
         saved = json.loads(marker.read_text(encoding="utf-8"))
         if saved["render_id"] != render_id:
@@ -51,11 +51,13 @@ def segment(root_string, rows, fps, config, render_id):
             processes[name] = encoder(temporary[name], width, height, fps, config, handle)
         for row in rows:
             plan = absolute_plan(row, root)
-            presentation = layout.frame(plan, config)
-            processes["presentation"].stdin.write(presentation.tobytes())
-            photo = layout.resized(plan["selected_image"], *config["crop"][2:])
-            if config.get("monochrome"):photo = photo.convert("L").convert("RGB")
-            processes["satellite"].stdin.write(photo.tobytes())
+            if "presentation" in processes:
+                presentation = layout.frame(plan, config)
+                processes["presentation"].stdin.write(presentation.tobytes())
+            if "satellite" in processes:
+                photo = layout.resized(plan["selected_image"], *config["crop"][2:])
+                if config.get("monochrome"):photo = photo.convert("L").convert("RGB")
+                processes["satellite"].stdin.write(photo.tobytes())
         for process in processes.values():
             process.stdin.close()
         for name, process in processes.items():
@@ -65,7 +67,7 @@ def segment(root_string, rows, fps, config, render_id):
             temporary[name].replace(path)
         result = {"render_id": render_id, "first": first, "stop": stop, "frames": len(rows),
                   "first_source_pts": rows[0]["source_pts"], "last_source_pts": rows[-1]["source_pts"],
-                  "presentation": paths["presentation"].name, "satellite": paths["satellite"].name}
+                  **{name:path.name for name,path in paths.items()}}
         write_json(marker, result)
         return result
     finally:
@@ -78,7 +80,7 @@ def segment(root_string, rows, fps, config, render_id):
 
 
 def mux(root, parts, kind, destination, config):
-    listing = root / "segments" / f"{kind}-concat.txt"
+    listing = root / config.get("render_segments","segments") / f"{kind}-concat.txt"
     listing.write_text("".join(f"file '{part[kind]}'\n" for part in parts), encoding="utf-8")
     temporary = destination.with_suffix(".tmp.mp4")
     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
@@ -97,19 +99,22 @@ def mux(root, parts, kind, destination, config):
 
 
 def render(root: Path, config, rows):
+    outputs = config.get("render_outputs",("presentation","satellite"))
+    if not outputs or len(set(outputs))!=len(outputs) or any(name not in ("presentation","satellite") for name in outputs):
+        raise ValueError("render_outputs must name presentation and/or satellite once")
     target = read_manifest(root / "targets")
     search = read_manifest(root / "search")
     render_id = identity([target["target_set_id"], search["run_id"], config, LAYOUT_VERSION])
     if [row["slot"] for row in rows] != list(range(target["count"])):
         raise ValueError("Frame plan must contain every source frame in order")
-    (root / "segments").mkdir(exist_ok=True)
+    (root / config.get("render_segments","segments")).mkdir(exist_ok=True)
     chunk = config["segment_frames"]
     parts = []
     if config.get("pause_file"):
         from .silhouette.control import batches
         def saved(_,part):
             parts.append(part)
-            print(f"Encoded source frames: {sum(p['frames'] for p in parts):,}/{len(rows):,} (two outputs)",flush=True)
+            print(f"Encoded source frames: {sum(p['frames'] for p in parts):,}/{len(rows):,} ({len(outputs)} outputs)",flush=True)
         batches([((str(root.resolve()),rows[begin:begin+chunk],target["frame_rate"],config,render_id),begin)
                  for begin in range(0,len(rows),chunk)],segment,saved,config["render_workers"],config["pause_file"])
     else:
@@ -119,12 +124,12 @@ def render(root: Path, config, rows):
             for future in as_completed(jobs):
                 part = future.result()
                 parts.append(part)
-                print(f"Encoded source frames: {sum(p['frames'] for p in parts):,}/{len(rows):,} (two outputs)", flush=True)
+                print(f"Encoded source frames: {sum(p['frames'] for p in parts):,}/{len(rows):,} ({len(outputs)} outputs)", flush=True)
     parts.sort(key=lambda part: part["first"])
     if sum(part["frames"] for part in parts) != target["count"]:
         raise ValueError("Encoded segments do not cover all source frames")
-    mux(root, parts, "presentation", root / "final-16x9.mp4", config)
-    mux(root, parts, "satellite", root / "satellite-full.mp4", config)
+    for kind,filename in (("presentation","final-16x9.mp4"),("satellite","satellite-full.mp4")):
+        if kind in outputs:mux(root, parts, kind, root/filename, config)
     # A representative real frame is a thumbnail, never an added video frame.
     preview_slot = min(len(rows)-1, round(41 * float(Fraction(target["frame_rate"]))))
     layout.frame(absolute_plan(rows[preview_slot], root), config).save(root / "preview.png")
