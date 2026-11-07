@@ -198,7 +198,7 @@ def test_shape_score_reuse_keeps_new_frame_view_pairs_in_previously_scored_slots
     def sequential(jobs,function,save,*args):
         for arguments,destination in jobs:save(destination,function(*arguments))
     monkeypatch.setattr(module,'batches',sequential)
-    config = {**metric,'incremental_retrieval':str(prior),'reuse_score_runs':[str(prior)],
+    config = {**metric,'incremental_retrieval':prior.as_posix(),'reuse_score_runs':[str(prior)],
               'workers':1,'pause_file':str(root/'pause.request')}
     meta = {i:dict(dense_row=i,tile_id=str(i),index_member='member',rgb_cache_ref='rgb.npy',rgb_cache_row=i) for i in (0,1)}
     paths = module.score_all(root,run,[{'slot':0},{'slot':1}],meta,config,set())

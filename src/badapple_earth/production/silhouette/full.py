@@ -90,7 +90,8 @@ def reused_score_paths(config):
         if any(manifest["config"][key]!=config[key] for key in (
                 "weights","region_contrast_min","edge_contrast_min","edge_contrast_scale","coverage_min","reversed_max")):
             raise ValueError("Reused shape scores need identical metric settings")
-        if str(prior)!=config.get("incremental_retrieval"):
+        baseline = config.get("incremental_retrieval")
+        if not baseline or prior.resolve()!=Path(baseline).resolve():
             raise ValueError("Reused scores must share the validated retrieval baseline")
         paths.extend(sorted((prior/"scores").glob("*.parquet")))
         paths.extend(Path(p)/"evaluations.parquet" for p in manifest["config"].get("reuse_searches",[]))
