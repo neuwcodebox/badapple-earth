@@ -42,7 +42,7 @@ def recipe(size, angle, scale=1.0):
             d, e, height/2+s*view_width/2-c*view_height/2]
 
 
-def transform(image, coefficients, canonical_size, output_size=None):
+def transform(image, coefficients, canonical_size, output_size=None, resample=Image.Resampling.NEAREST):
     output_size = tuple(output_size or canonical_size)
     cw, ch = canonical_size
     ow, oh = output_size
@@ -50,14 +50,14 @@ def transform(image, coefficients, canonical_size, output_size=None):
     a, b, c, d, e, f = coefficients
     actual = (a*cw/ow*iw/cw, b*ch/oh*iw/cw, c*iw/cw,
               d*cw/ow*ih/ch, e*ch/oh*ih/ch, f*ih/ch)
-    return image.transform(output_size, Image.Transform.AFFINE, actual,
-                           resample=Image.Resampling.NEAREST)
+    return image.transform(output_size, Image.Transform.AFFINE, actual,resample=resample)
 
 
 def image_view(image, row, output_size=None):
     if row.get("transform_version") != VERSION:
         raise ValueError("Unsupported affine view version")
-    return transform(image, row["view_affine"], row["transform_size"], output_size)
+    resample = Image.Resampling.BILINEAR if row.get("view_resampling")=="bilinear" else Image.Resampling.NEAREST
+    return transform(image, row["view_affine"], row["transform_size"], output_size,resample)
 
 
 def native_view(image, row):

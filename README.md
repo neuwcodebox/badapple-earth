@@ -375,6 +375,19 @@ uv run python -m badapple_earth.production.silhouette.expansion --resume
 
 ## 사용 방법
 
+### 실제 사진의 이동·확대·회전을 맞추는 전곡
+
+같은 사진의 프레이밍을 원본 실루엣 위치에 맞추려면 다음 명령을 사용한다. 기존 150만 후보의 특징·형태 점수·명암 선택을 재사용하고, 위치 변화에 덜 민감한 추가 검색→유효 범위의 이동·확대·회전 정합→시간축 선택→두 흑백 영상과 검증으로 이어간다.
+
+```powershell
+$env:OPENBLAS_NUM_THREADS='8'
+$env:OMP_NUM_THREADS='8'
+$env:NUMBA_NUM_THREADS='8'
+uv run python -m badapple_earth.production.registration.pipeline --resume
+```
+
+설정은 `config/registration-full.json`, 출력은 `data/runs/p6-registered-1.5m-full/`이다. `--pause`로 중단을 요청하며 같은 경로에서 재개할 수 있다. 사진 밖의 패딩이나 생성 영역은 출력하지 않는다. 기준 영상은 보존한다. 실행·검증 상태는 [연속 프레이밍 기록](docs/history/2026-11-07-P6-continuous-framing.md)을 따른다.
+
 기본 제작 흐름은 다음과 같다.
 
 1. 로컬 MP4의 콘텐츠 비율·스트림·PTS를 확인하고 전체 프레임을 준비한다. 구간/규모 비교는 별도의 고정 10초 세트를 사용한다.
