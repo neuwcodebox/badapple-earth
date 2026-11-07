@@ -28,6 +28,7 @@ from .search import retrieve,VERSION as SEARCH_VERSION
 from .geometry import VERSION
 from .selection import reduce_options,choose
 from .workers import initialize,coarse_job,fine_job,prepare_targets
+from .assets import reuse_native
 
 
 def seeds(root,source,baseline,pixels,retrieval,config):
@@ -268,6 +269,7 @@ def produce(config,resume=False):
             meta = {r["dense_row"]:r for r in table.to_pylist()}
             runtime = {**config,"pause_file":str(root/"pause.request")}
             stage("assets")
+            reuse_native(root,baseline,pq.read_table(root/"selected.parquet").to_pylist())
             assets(root,run,targets,meta,runtime,reuse_assets=baseline)
             stage("render")
             for folder in (root/"targets",root/"search"):folder.mkdir(exist_ok=True)

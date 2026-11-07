@@ -13,6 +13,7 @@ from badapple_earth.matching.affine import transform
 from badapple_earth.production.registration.selection import choose,reduce_options
 from badapple_earth.production.registration.search import retrieve
 from badapple_earth.production.registration.pipeline import fine_groups
+from badapple_earth.production.registration.assets import relative_view,reuse_native
 
 
 def test_global_descriptor_preserves_translation_and_rejects_uniform_content():
@@ -155,3 +156,25 @@ def test_shared_target_pixels_avoid_png_reopening_and_survive_interrupted_publis
     try:
         np.testing.assert_array_equal(target_image(str(directory/'frames/000002.png')),9)
     finally:set_target_cache(None)
+
+
+def test_native_reuse_only_samples_an_existing_photo_crop_that_covers_the_view(tmp_path):
+    baseline,root = tmp_path/'baseline',tmp_path/'output'
+    folder = baseline/'assets/selected'
+    folder.mkdir(parents=True)
+    old=dict(tile_id='photo',view_id='old',view_affine=[1,0,0,0,1,0],rotation_degrees=0,window=[0,0,512,382])
+    pq.write_table(pa.Table.from_pylist([old]),baseline/'selected.parquet')
+    yy,xx=np.mgrid[:382,:512]
+    image=Image.fromarray(np.stack([xx%256,yy%256,(xx+yy)%256],axis=-1).astype(np.uint8))
+    image.save(folder/'old.png')
+    parameters=[.7,.2,.5,15]
+    new={**old,'view_id':'new','view_affine':coefficients(parameters),'registration_parameters':parameters}
+    relative=relative_view(old,new)
+    assert relative is not None
+    reuse_native(root,baseline,[new])
+    with Image.open(root/'assets/selected/new.png') as result:
+        expected=transform(image,relative,SIZE,result.size,resample=Image.Resampling.BILINEAR)
+        np.testing.assert_array_equal(result,expected)
+    assert json.loads((root/'native-reuse.json').read_text())['reused_views']==1
+    narrow={**old,'view_affine':coefficients([.5,.5,.4,0])}
+    assert relative_view(narrow,new) is None
